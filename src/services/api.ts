@@ -3,7 +3,7 @@ import { METRIC_API_MAP } from '../types'
 import { sampleModels } from '../data/sampleData'
 
 // 开发环境走 Vite proxy 解决跨域，生产环境直接请求
-const API_BASE = import.meta.env.DEV ? '/api/v2' : 'https://artificialanalysis.ai/api/v2'
+const API_URL = import.meta.env.DEV ? '/api/v2/data/llms/models' : '/api/models'
 const STORAGE_KEY = 'llm-radar-api-key'
 
 function getApiKey(): string | null {
@@ -123,7 +123,7 @@ export async function fetchModelsFromApi(): Promise<ModelInfo[]> {
     throw new Error('未设置 API Key')
   }
 
-  const resp = await fetch(`${API_BASE}/data/llms/models`, {
+  const resp = await fetch(API_URL, {
     headers: { 'x-api-key': apiKey },
   })
 
@@ -131,7 +131,12 @@ export async function fetchModelsFromApi(): Promise<ModelInfo[]> {
     throw new Error(`API 请求失败: ${resp.status} ${resp.statusText}`)
   }
 
-  const json: ApiResponse = await resp.json()
+  const body = await resp.text()
+  if (!body) {
+    throw new Error(`API 返回空响应: ${resp.status}`)
+  }
+
+  const json: ApiResponse = JSON.parse(body)
   if (!json.data || !Array.isArray(json.data)) {
     throw new Error('API 返回数据格式异常')
   }
