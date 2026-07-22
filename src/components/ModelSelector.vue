@@ -35,7 +35,22 @@ const visibleCount = computed(() => totalSel.value - props.hidden.size)
 
 function doToggle(id: string) {
   emit('toggle', id)
-  nextTick(() => { const el = document.getElementById(`r-${id}`); el && listEl.value?.scrollTo({ top: el.offsetTop - 50, behavior: 'smooth' }) })
+  nextTick(() => {
+    const list = listEl.value
+    const el = document.getElementById(`r-${id}`)
+    if (!list || !el) return
+
+    const listRect = list.getBoundingClientRect()
+    const itemRect = el.getBoundingClientRect()
+    const edge = listRect.height * 0.2
+    const nearTop = itemRect.top < listRect.top + edge
+    const nearBottom = itemRect.bottom > listRect.bottom - edge
+    if (!nearTop && !nearBottom) return
+
+    const itemOffset = itemRect.top - listRect.top
+    const centeredTop = list.scrollTop + itemOffset - (listRect.height - itemRect.height) / 2
+    list.scrollTo({ top: centeredTop, behavior: 'smooth' })
+  })
 }
 function doVis(id: string) { emit('toggle-visibility', id) }
 function toggleAll() {
