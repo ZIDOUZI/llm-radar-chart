@@ -1,20 +1,29 @@
 const UPSTREAM_URL = 'https://artificialanalysis.ai/api/v2/data/llms/models'
 
-export default async function handler(request: Request): Promise<Response> {
+type VercelRequest = {
+  method?: string
+  headers: Record<string, string | string[] | undefined>
+}
+
+type VercelResponse = {
+  status(code: number): VercelResponse
+  setHeader(name: string, value: string): VercelResponse
+  json(body: unknown): VercelResponse
+  send(body: string): VercelResponse
+}
+
+export default async function handler(request: VercelRequest, response: VercelResponse): Promise<void> {
   if (request.method !== 'GET') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'content-type': 'application/json' },
-    })
+    response.status(405).json({ error: 'Method not allowed' })
+    return
   }
 
   // Every visitor supplies their own key; the proxy does not use a site-owned key.
-  const apiKey = request.headers.get('x-api-key')
+  const rawApiKey = request.headers['x-api-key']
+  const apiKey = Array.isArray(rawApiKey) ? rawApiKey[0] : rawApiKey
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'Missing Artificial Analysis API key' }), {
-      status: 401,
-      headers: { 'content-type': 'application/json' },
-    })
+    response.status(401).json({ error: 'Missing Artificial Analysis API key' })
+    return
   }
 
   try {
@@ -23,16 +32,11 @@ export default async function handler(request: Request): Promise<Response> {
     })
     const body = await upstream.text()
 
-    return new Response(body, {
-      status: upstream.status,
-      headers: {
-        'content-type': upstream.headers.get('content-type') || 'application/json',
-      },
-    })
+    response
+      .status(upstream.status)
+      .setHeader('content-type', upstream.headers.get('content-type') || 'application/json')
+      .send(body)
   } catch {
-    return new Response(JSON.stringify({ error: 'Artificial Analysis request failed' }), {
-      status: 502,
-      headers: { 'content-type': 'application/json' },
-    })
+    response.status(502).json({ error: 'Artificial Analysis request failed' })
   }
 }
