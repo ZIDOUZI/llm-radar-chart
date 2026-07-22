@@ -1,0 +1,21 @@
+{
+  "name": "llm-radar-chart",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.7",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.3",
+    "typescript": "~5.7.3",
+    "vite": "^6.2.4",
+    "vue-tsc": "^2.2.8"
+  }
+}
