@@ -154,7 +154,7 @@ function toggleMetric(key: string) {
       <div class="ld-spin"></div><p>加载中…</p>
     </div>
 
-    <ModelDetail v-else-if="detailModel" :model="detailModel" @back="closeDetail" />
+    <ModelDetail v-else-if="detailModel" :model="detailModel" :prefer="prefer" @back="closeDetail" />
 
     <div v-else class="main">
       <aside class="sb">

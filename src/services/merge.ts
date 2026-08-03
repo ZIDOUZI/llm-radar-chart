@@ -1,4 +1,4 @@
-import type { ModelInfo, RadarMetrics } from '../types'
+import type { ModelDetailExtra, ModelInfo, RadarMetrics } from '../types'
 import { METRIC_LABELS } from '../types'
 import { matchArenaToAa } from './match'
 
@@ -29,11 +29,26 @@ export function mergeModels(aa: ModelInfo[], arena: ModelInfo[], prefer: PreferS
 
   const merged: ModelInfo[] = aa.map((m) => {
     const ar = matched.get(m.id)
-    if (!ar) return m
+    if (!ar) {
+      return {
+        ...m,
+        detail: {
+          sources: { aa: { ...m.metrics } },
+        },
+      }
+    }
     usedArena.add(ar.id)
 
     const metrics = {} as RadarMetrics
     for (const k of DIM_KEYS) metrics[k] = pickDim(prefer, m.metrics[k], ar.metrics[k])
+
+    const detail: ModelDetailExtra = {
+      sources: {
+        aa: { ...m.metrics },
+        arena: ar.detail?.sources?.arena,
+      },
+      arena: ar.detail?.arena,
+    }
 
     return {
       ...m,
@@ -47,6 +62,7 @@ export function mergeModels(aa: ModelInfo[], arena: ModelInfo[], prefer: PreferS
         modalities: pickMeta(m.meta.modalities, ar.meta.modalities),
         releaseDate: pickMeta(m.meta.releaseDate, ar.meta.releaseDate),
       },
+      detail,
     }
   })
 

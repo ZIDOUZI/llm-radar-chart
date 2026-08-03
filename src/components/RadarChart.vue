@@ -20,6 +20,7 @@ const props = defineProps<{
   models: ModelInfo[]
   hidden: Set<string>
   activeMetrics: Set<string>
+  noLegend?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -156,6 +157,7 @@ function buildOptions(): ChartOptions<'radar'> {
     },
     plugins: {
       legend: {
+        display: !props.noLegend,
         position: 'right',
         align: 'start',
         labels: {

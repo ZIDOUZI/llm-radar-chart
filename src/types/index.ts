@@ -64,6 +64,23 @@ export interface ModelMeta {
   releaseDate: string     // 发布日期
 }
 
+/** 详情页附加信息:双源对比值与 arena 原始排行 */
+export interface ModelDetailExtra {
+  /** 各数据源提供的维度分(0-100,与 metrics 同口径),只含该源实际有的维度 */
+  sources?: {
+    aa?: Partial<RadarMetrics>
+    arena?: Partial<RadarMetrics>
+  }
+  /** arena 原始排行榜信息 */
+  arena?: {
+    rank: number | null
+    votes: number | null
+    license: string | null
+    publishedAt: string | null
+    categories: Record<string, { rating: number | null; rank: number | null; votes: number | null }>
+  }
+}
+
 export interface ModelInfo {
   id: string
   slug?: string          // artificialanalysis.ai 页面路径名
@@ -73,6 +90,7 @@ export interface ModelInfo {
   rawPrice: number
   intelligenceIndex: number
   meta: ModelMeta
+  detail?: ModelDetailExtra
 }
 
 export interface ApiModelData {

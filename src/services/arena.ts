@@ -1,4 +1,5 @@
 import type { ArenaApiResponse, ModelInfo, RadarMetrics } from '../types'
+import { METRIC_LABELS } from '../types'
 import { arenaSampleModels } from '../data/arenaSampleData'
 
 const ARENA_URL = '/api/arena'
@@ -79,6 +80,17 @@ function transformArena(data: ArenaApiResponse): ModelInfo[] {
 
   return textRows.map((row) => {
     const metrics = buildMetrics(data, row.key, ranges)
+    // 各分类的原始排行值(text Elo / agent score / factuality Elo …)
+    const categories: Record<string, { rating: number | null; rank: number | null; votes: number | null }> = {}
+    for (const [cat, rows] of Object.entries(data.categories)) {
+      const r = rows.find((x) => x.key === row.key)
+      if (r) categories[cat] = { rating: r.rating, rank: r.rank, votes: r.votes }
+    }
+    // 该模型从 arena 实际拿到的雷达维度(>0 才算有)
+    const arenaMetrics: Partial<RadarMetrics> = {}
+    for (const k of Object.keys(METRIC_LABELS) as (keyof RadarMetrics)[]) {
+      if (metrics[k] > 0) arenaMetrics[k] = metrics[k]
+    }
     return {
       id: row.key,
       name: row.name,
@@ -93,6 +105,16 @@ function transformArena(data: ArenaApiResponse): ModelInfo[] {
         latency: '—',
         modalities: '—',
         releaseDate: '—',
+      },
+      detail: {
+        sources: { arena: arenaMetrics },
+        arena: {
+          rank: row.rank,
+          votes: row.votes,
+          license: row.license,
+          publishedAt: row.publishedAt,
+          categories,
+        },
       },
     }
   })
