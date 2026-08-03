@@ -9,18 +9,24 @@ export interface ArenaFetchResult {
 }
 
 /**
- * arena 分类名 → 雷达维度候选键。
- * arena.ai 的分类命名不稳定(还在迭代),多给几个候选,后续按真实数据收敛。
+ * arena 数据集 config 名 → 雷达维度候选键。
+ * 已按真实数据集结构收敛(2026-08):
+ * - text=综合推理, agent=智能体, text_factuality=事实可靠
+ * - arena 数据集目前没有 code / instruction / long-context 榜,对应维度留 0
  */
 const DIM_CATEGORY_CANDIDATES: Record<keyof RadarMetrics, string[][]> = {
-  intelligence: [['text'], ['text-chat'], ['chat'], ['default']],
-  coding: [['code'], ['coding']],
-  instruction: [['instruction-following'], ['instruction']],
-  longContext: [['long-context'], ['long-context-arena'], ['context']],
-  agent: [['agent'], ['agent-arena']],
-  factuality: [['factuality'], ['factuality-adjusted']],
+  intelligence: [['text']],
+  coding: [],
+  instruction: [],
+  longContext: [],
+  agent: [['agent']],
+  factuality: [['text_factuality'], ['search_factuality']],
   speed: [],
   price: [],
+}
+
+function capitalize(s: string): string {
+  return s.replace(/\b[a-z]/g, (c) => c.toUpperCase())
 }
 
 function eloScore(rating: number, min: number, max: number): number {
@@ -68,11 +74,7 @@ function buildMetrics(
 }
 
 function transformArena(data: ArenaApiResponse): ModelInfo[] {
-  const textRows =
-    data.categories['text'] ??
-    data.categories['default'] ??
-    Object.values(data.categories)[0] ??
-    []
+  const textRows = data.categories['text'] ?? Object.values(data.categories)[0] ?? []
   const ranges = computeRanges(data)
 
   return textRows.map((row) => {
@@ -80,8 +82,8 @@ function transformArena(data: ArenaApiResponse): ModelInfo[] {
     return {
       id: row.key,
       name: row.name,
-      provider: row.provider ?? 'Unknown',
-      // TODO: arena 的 price/context 列接入后再映射,目前价格未知显示 Free
+      provider: row.provider ? capitalize(row.provider) : 'Unknown',
+      // TODO: arena 数据集暂无价格列,后续如提供再映射;当前显示 Free 仅为骨架占位
       rawPrice: 0,
       intelligenceIndex: metrics.intelligence,
       metrics,
