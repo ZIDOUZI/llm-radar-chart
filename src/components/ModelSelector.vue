@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick } from 'vue'
 import type { ModelInfo } from '../types'
+import { fuzzyMatch } from '../utils/fuzzy'
 
 const props = defineProps<{ models: ModelInfo[]; selected: Set<string>; hidden: Set<string> }>()
 const emit = defineEmits<{ toggle: [id: string]; 'toggle-visibility': [id: string]; selectAll: []; clearAll: []; 'toggle-all-vis': []; hover: [m: ModelInfo | null]; detail: [id: string] }>()
@@ -13,7 +14,7 @@ const listEl = ref<HTMLElement | null>(null)
 const providers = computed(() => [...new Set(props.models.map(m => m.provider))].sort())
 const filtered = computed(() => {
   let r = props.models
-  if (q.value) { const s = q.value.toLowerCase(); r = r.filter(m => m.name.toLowerCase().includes(s) || m.provider.toLowerCase().includes(s)) }
+  if (q.value) r = r.filter(m => fuzzyMatch(q.value, m.name, m.provider))
   if (provFilter.value) r = r.filter(m => m.provider === provFilter.value)
   return r
 })
