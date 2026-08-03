@@ -1,20 +1,27 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
-import type { ModelInfo, DataSource } from './types'
+import type { ModelInfo } from './types'
 import { METRIC_LABELS } from './types'
 import { getModels, setApiKey, clearApiKey, hasApiKey } from './services/api'
 import { fetchArenaModels } from './services/arena'
+import { mergeModels } from './services/merge'
+import type { PreferSource } from './services/merge'
 import ModelSelector from './components/ModelSelector.vue'
 import RadarChart from './components/RadarChart.vue'
 import ModelTooltip from './components/ModelTooltip.vue'
 import ModelDetail from './components/ModelDetail.vue'
 
 const SELECTED_CACHE_KEY = 'llm-radar-selected'
+const PREFER_KEY = 'llm-radar-prefer'
 
 function loadCachedSelected(): string[] { try { const r = localStorage.getItem(SELECTED_CACHE_KEY); return r ? JSON.parse(r) : [] } catch { return [] } }
 function saveCachedSelected(ids: Set<string>) { localStorage.setItem(SELECTED_CACHE_KEY, JSON.stringify([...ids])) }
+function loadPrefer(): PreferSource {
+  try { return localStorage.getItem(PREFER_KEY) === 'arena' ? 'arena' : 'aa' } catch { return 'aa' }
+}
 
-const models = ref<ModelInfo[]>([])
+const aaModels = ref<ModelInfo[]>([])
+const arenaModels = ref<ModelInfo[]>([])
 const selectedIds = reactive(new Set<string>())
 const hiddenIds = reactive(new Set<string>())
 const loading = ref(true)
@@ -27,18 +34,13 @@ const apiKeyInput = ref('')
 const showApiKeyInput = ref(false)
 const usingApi = ref(hasApiKey())
 const detailId = ref<string | null>(null)
-const source = ref<DataSource>('aa')
 const arenaLive = ref(false)
+const prefer = ref<PreferSource>(loadPrefer())
 
+const models = computed(() => mergeModels(aaModels.value, arenaModels.value, prefer.value))
 const selectedModels = computed(() => models.value.filter(m => selectedIds.has(m.id)))
 const detailModel = computed(() =>
   detailId.value != null ? models.value.find(m => m.id === detailId.value) ?? null : null
-)
-const isLive = computed(() => (source.value === 'arena' ? arenaLive.value : usingApi.value))
-const tagText = computed(() =>
-  source.value === 'arena'
-    ? (arenaLive.value ? 'Arena' : 'Sample')
-    : (usingApi.value ? 'Live' : 'Sample')
 )
 watch(selectedIds, s => saveCachedSelected(s), { deep: true })
 
@@ -58,43 +60,43 @@ function closeDetail() {
   window.location.hash = '#/'
 }
 
-onMounted(async () => {
-  window.addEventListener('hashchange', syncRoute)
-  syncRoute()
-  try {
-    models.value = await getModels(); usingApi.value = hasApiKey()
-    const cached = loadCachedSelected()
-    if (cached.length) { for (const id of cached) { if (models.value.some(m => m.id === id)) selectedIds.add(id) } }
-    if (selectedIds.size === 0) { for (const m of models.value.slice(0, 3)) selectedIds.add(m.id) }
-  } catch (e) { error.value = e instanceof Error ? e.message : '加载失败' }
-  finally { loading.value = false }
-})
-
-onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
-
-async function switchSource(src: DataSource) {
-  if (src === source.value) return
-  source.value = src
-  loading.value = true
-  error.value = null
+function resetSelection() {
+  const cached = loadCachedSelected()
   selectedIds.clear()
   hiddenIds.clear()
+  if (cached.length) { for (const id of cached) { if (models.value.some(m => m.id === id)) selectedIds.add(id) } }
+  if (selectedIds.size === 0) { for (const m of models.value.slice(0, 3)) selectedIds.add(m.id) }
+}
+
+async function loadAllModels() {
+  loading.value = true
+  error.value = null
   try {
-    if (src === 'arena') {
-      const r = await fetchArenaModels()
-      arenaLive.value = r.live
-      models.value = r.models
-    } else {
-      arenaLive.value = false
-      models.value = await getModels()
-    }
-    for (const m of models.value.slice(0, 3)) selectedIds.add(m.id)
+    const [aa, arena] = await Promise.all([getModels(), fetchArenaModels()])
+    aaModels.value = aa
+    arenaModels.value = arena.models
+    arenaLive.value = arena.live
+    usingApi.value = hasApiKey()
+    resetSelection()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loading.value = false
   }
 }
+
+function setPrefer(p: PreferSource) {
+  prefer.value = p
+  try { localStorage.setItem(PREFER_KEY, p) } catch { /* ignore */ }
+}
+
+onMounted(async () => {
+  window.addEventListener('hashchange', syncRoute)
+  syncRoute()
+  await loadAllModels()
+})
+
+onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
 
 function toggleModel(id: string) { selectedIds.has(id) ? (selectedIds.delete(id), hiddenIds.delete(id)) : selectedIds.add(id) }
 function toggleVisibility(id: string) { hiddenIds.has(id) ? hiddenIds.delete(id) : hiddenIds.add(id) }
@@ -104,18 +106,11 @@ function selectAll() {}
 async function handleSetApiKey() {
   const k = apiKeyInput.value.trim(); if (!k) return
   setApiKey(k); apiKeyInput.value = ''; showApiKeyInput.value = false
-  loading.value = true; error.value = null
-  try {
-    selectedIds.clear(); hiddenIds.clear(); models.value = await getModels(); usingApi.value = true
-    for (const m of models.value.slice(0, 3)) selectedIds.add(m.id)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'; clearApiKey(); usingApi.value = false
-    models.value = await getModels()
-  } finally { loading.value = false }
+  await loadAllModels()
 }
 function handleClearApiKey() {
-  clearApiKey(); usingApi.value = false; selectedIds.clear(); hiddenIds.clear()
-  getModels().then(m => { models.value = m; for (const d of m.slice(0, 3)) selectedIds.add(d.id) })
+  clearApiKey(); usingApi.value = false
+  loadAllModels()
 }
 function toggleAllVisibility() {
   const v = selectedModels.value.length - hiddenIds.size
@@ -136,15 +131,14 @@ function toggleMetric(key: string) {
     <header class="hdr">
       <span class="hdr-logo">◈ LLM Radar</span>
       <div class="hdr-right">
-        <div class="src-switch">
-          <button class="src-btn" :class="{ on: source === 'aa' }" @click="switchSource('aa')" title="artificialanalysis.ai 数据">AA</button>
-          <button class="src-btn" :class="{ on: source === 'arena' }" @click="switchSource('arena')" title="arena.ai (LMArena) Elo 数据">Arena</button>
+        <div class="src-switch" title="优先显示的数据源,维度缺失时自动回退到另一个">
+          <button class="src-btn" :class="{ on: prefer === 'aa' }" @click="setPrefer('aa')">优先 AA</button>
+          <button class="src-btn" :class="{ on: prefer === 'arena' }" @click="setPrefer('arena')">优先 Arena</button>
         </div>
-        <span class="hdr-tag" :class="{ live: isLive }">{{ tagText }}</span>
-        <template v-if="source === 'aa'">
-          <button v-if="!usingApi" class="hdr-btn" @click="toggleApiKeyInput">{{ showApiKeyInput ? '取消' : 'Key' }}</button>
-          <button v-else class="hdr-btn hdr-btn-x" @click="handleClearApiKey">Clear Key</button>
-        </template>
+        <span class="hdr-tag" :class="{ live: usingApi }">AA {{ usingApi ? 'Live' : 'Sample' }}</span>
+        <span class="hdr-tag" :class="{ live: arenaLive }">Arena {{ arenaLive ? 'Live' : 'Sample' }}</span>
+        <button v-if="!usingApi" class="hdr-btn" @click="toggleApiKeyInput">{{ showApiKeyInput ? '取消' : 'Key' }}</button>
+        <button v-else class="hdr-btn hdr-btn-x" @click="handleClearApiKey">Clear Key</button>
       </div>
     </header>
 
@@ -184,7 +178,7 @@ function toggleMetric(key: string) {
           @toggle-visibility="toggleVisibility" @hover="onModelHover" />
         <ModelTooltip :model="hoveredModel" />
         <div class="ch-foot">
-          <span class="ch-note">{{ source === 'arena' ? 'arena.ai (LMArena) · Elo 测评' : (usingApi ? 'artificialanalysis.ai' : '样本数据 · 离线模式') }}</span>
+          <span class="ch-note">{{ prefer === 'arena' ? '优先 Arena · 缺失回退 AA' : '优先 AA · 缺失回退 Arena' }}</span>
         </div>
       </section>
     </div>
