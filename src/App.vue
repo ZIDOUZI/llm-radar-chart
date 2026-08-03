@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
-import type { ModelInfo } from './types'
+import type { ModelInfo, DataSource } from './types'
 import { METRIC_LABELS } from './types'
 import { getModels, setApiKey, clearApiKey, hasApiKey } from './services/api'
+import { fetchArenaModels } from './services/arena'
 import ModelSelector from './components/ModelSelector.vue'
 import RadarChart from './components/RadarChart.vue'
 import ModelTooltip from './components/ModelTooltip.vue'
@@ -26,10 +27,18 @@ const apiKeyInput = ref('')
 const showApiKeyInput = ref(false)
 const usingApi = ref(hasApiKey())
 const detailId = ref<string | null>(null)
+const source = ref<DataSource>('aa')
+const arenaLive = ref(false)
 
 const selectedModels = computed(() => models.value.filter(m => selectedIds.has(m.id)))
 const detailModel = computed(() =>
   detailId.value != null ? models.value.find(m => m.id === detailId.value) ?? null : null
+)
+const isLive = computed(() => (source.value === 'arena' ? arenaLive.value : usingApi.value))
+const tagText = computed(() =>
+  source.value === 'arena'
+    ? (arenaLive.value ? 'Arena' : 'Sample')
+    : (usingApi.value ? 'Live' : 'Sample')
 )
 watch(selectedIds, s => saveCachedSelected(s), { deep: true })
 
@@ -62,6 +71,30 @@ onMounted(async () => {
 })
 
 onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
+
+async function switchSource(src: DataSource) {
+  if (src === source.value) return
+  source.value = src
+  loading.value = true
+  error.value = null
+  selectedIds.clear()
+  hiddenIds.clear()
+  try {
+    if (src === 'arena') {
+      const r = await fetchArenaModels()
+      arenaLive.value = r.live
+      models.value = r.models
+    } else {
+      arenaLive.value = false
+      models.value = await getModels()
+    }
+    for (const m of models.value.slice(0, 3)) selectedIds.add(m.id)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
 
 function toggleModel(id: string) { selectedIds.has(id) ? (selectedIds.delete(id), hiddenIds.delete(id)) : selectedIds.add(id) }
 function toggleVisibility(id: string) { hiddenIds.has(id) ? hiddenIds.delete(id) : hiddenIds.add(id) }
@@ -103,9 +136,15 @@ function toggleMetric(key: string) {
     <header class="hdr">
       <span class="hdr-logo">◈ LLM Radar</span>
       <div class="hdr-right">
-        <span class="hdr-tag" :class="{ live: usingApi }">{{ usingApi ? 'Live' : 'Sample' }}</span>
-        <button v-if="!usingApi" class="hdr-btn" @click="toggleApiKeyInput">{{ showApiKeyInput ? '取消' : 'Key' }}</button>
-        <button v-else class="hdr-btn hdr-btn-x" @click="handleClearApiKey">Clear Key</button>
+        <div class="src-switch">
+          <button class="src-btn" :class="{ on: source === 'aa' }" @click="switchSource('aa')" title="artificialanalysis.ai 数据">AA</button>
+          <button class="src-btn" :class="{ on: source === 'arena' }" @click="switchSource('arena')" title="arena.ai (LMArena) Elo 数据">Arena</button>
+        </div>
+        <span class="hdr-tag" :class="{ live: isLive }">{{ tagText }}</span>
+        <template v-if="source === 'aa'">
+          <button v-if="!usingApi" class="hdr-btn" @click="toggleApiKeyInput">{{ showApiKeyInput ? '取消' : 'Key' }}</button>
+          <button v-else class="hdr-btn hdr-btn-x" @click="handleClearApiKey">Clear Key</button>
+        </template>
       </div>
     </header>
 
@@ -145,7 +184,7 @@ function toggleMetric(key: string) {
           @toggle-visibility="toggleVisibility" @hover="onModelHover" />
         <ModelTooltip :model="hoveredModel" />
         <div class="ch-foot">
-          <span class="ch-note">{{ usingApi ? 'artificialanalysis.ai' : '样本数据 · 离线模式' }}</span>
+          <span class="ch-note">{{ source === 'arena' ? 'arena.ai (LMArena) · Elo 测评' : (usingApi ? 'artificialanalysis.ai' : '样本数据 · 离线模式') }}</span>
         </div>
       </section>
     </div>
@@ -172,6 +211,14 @@ body {
 .hdr-right { display: flex; align-items: center; gap: 8px; }
 .hdr-tag { font-size: 0.65rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: #f3f4f6; color: #6b7280; }
 .hdr-tag.live { background: #dbeafe; color: #2563eb; }
+.src-switch { display: flex; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.src-btn {
+  padding: 3px 10px; border: none; background: #fff; font-size: 0.72rem; color: #6b7280;
+  cursor: pointer; transition: all 0.15s;
+}
+.src-btn + .src-btn { border-left: 1px solid #e5e7eb; }
+.src-btn:hover { background: #f9fafb; }
+.src-btn.on { background: #2563eb; color: #fff; }
 .hdr-btn {
   font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; border: 1px solid #e5e7eb;
   background: #fff; color: #374151; cursor: pointer; transition: all 0.15s;

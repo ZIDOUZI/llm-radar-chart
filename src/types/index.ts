@@ -32,6 +32,30 @@ export const METRIC_API_MAP: Record<keyof RadarMetrics, string[]> = {
   price: [],
 }
 
+/** 雷达数据源 */
+export type DataSource = 'aa' | 'arena' | 'sample'
+
+/** arena.ai (LMArena) 排行单行 */
+export interface ArenaLeaderboardRow {
+  key: string           // slug 化后的模型名,用于跨分类匹配
+  name: string
+  provider: string | null
+  license: string | null
+  rank: number | null
+  rating: number | null // Arena Elo
+  votes: number | null
+  category: string | null
+  publishedAt: string | null
+}
+
+/** GET /api/arena 响应 */
+export interface ArenaApiResponse {
+  source: 'arena'
+  generatedAt: string
+  latestDate: string | null
+  categories: Record<string, ArenaLeaderboardRow[]>
+}
+
 export interface ModelMeta {
   contextWindow: string   // 上下文窗口，如 "1M"
   outputSpeed: string     // 输出速度，如 "153 t/s"
