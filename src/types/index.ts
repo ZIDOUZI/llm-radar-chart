@@ -42,6 +42,7 @@ export interface ModelMeta {
 
 export interface ModelInfo {
   id: string
+  slug?: string          // artificialanalysis.ai 页面路径名
   name: string
   provider: string
   metrics: RadarMetrics
@@ -73,4 +74,3 @@ export interface ApiResponse {
   status: number
   data: ApiModelData[]
 }
-

@@ -104,6 +104,7 @@ function transformModel(raw: ApiModelData, allModels: ApiModelData[]): ModelInfo
 
   return {
     id: raw.id,
+    slug: raw.slug || raw.id,
     name: raw.name,
     provider: raw.model_creator?.name ?? 'Unknown',
     rawPrice: blendedPrice ?? 0,

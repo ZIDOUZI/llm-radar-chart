@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import type { ModelInfo } from './types'
 import { METRIC_LABELS } from './types'
 import { getModels, setApiKey, clearApiKey, hasApiKey } from './services/api'
 import ModelSelector from './components/ModelSelector.vue'
 import RadarChart from './components/RadarChart.vue'
 import ModelTooltip from './components/ModelTooltip.vue'
+import ModelDetail from './components/ModelDetail.vue'
 
 const SELECTED_CACHE_KEY = 'llm-radar-selected'
 
@@ -24,11 +25,33 @@ const showSettings = ref(false)
 const apiKeyInput = ref('')
 const showApiKeyInput = ref(false)
 const usingApi = ref(hasApiKey())
+const detailId = ref<string | null>(null)
 
 const selectedModels = computed(() => models.value.filter(m => selectedIds.has(m.id)))
+const detailModel = computed(() =>
+  detailId.value != null ? models.value.find(m => m.id === detailId.value) ?? null : null
+)
 watch(selectedIds, s => saveCachedSelected(s), { deep: true })
 
+function parseHash(): { view: 'radar' } | { view: 'detail'; id: string } {
+  const m = window.location.hash.match(/^#\/models\/(.+)$/)
+  if (m) return { view: 'detail', id: decodeURIComponent(m[1]) }
+  return { view: 'radar' }
+}
+function syncRoute() {
+  const r = parseHash()
+  detailId.value = r.view === 'detail' ? r.id : null
+}
+function openDetail(id: string) {
+  window.location.hash = '#/models/' + encodeURIComponent(id)
+}
+function closeDetail() {
+  window.location.hash = '#/'
+}
+
 onMounted(async () => {
+  window.addEventListener('hashchange', syncRoute)
+  syncRoute()
   try {
     models.value = await getModels(); usingApi.value = hasApiKey()
     const cached = loadCachedSelected()
@@ -37,6 +60,8 @@ onMounted(async () => {
   } catch (e) { error.value = e instanceof Error ? e.message : '加载失败' }
   finally { loading.value = false }
 })
+
+onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
 
 function toggleModel(id: string) { selectedIds.has(id) ? (selectedIds.delete(id), hiddenIds.delete(id)) : selectedIds.add(id) }
 function toggleVisibility(id: string) { hiddenIds.has(id) ? hiddenIds.delete(id) : hiddenIds.add(id) }
@@ -96,6 +121,8 @@ function toggleMetric(key: string) {
       <div class="ld-spin"></div><p>加载中…</p>
     </div>
 
+    <ModelDetail v-else-if="detailModel" :model="detailModel" @back="closeDetail" />
+
     <div v-else class="main">
       <aside class="sb">
         <div class="sb-settings">
@@ -111,7 +138,7 @@ function toggleMetric(key: string) {
         </div>
         <ModelSelector :models="models" :selected="selectedIds" :hidden="hiddenIds"
           @toggle="toggleModel" @toggle-visibility="toggleVisibility" @selectAll="selectAll" @clearAll="clearAll"
-          @toggle-all-vis="toggleAllVisibility" @hover="onModelHover" />
+          @toggle-all-vis="toggleAllVisibility" @hover="onModelHover" @detail="openDetail" />
       </aside>
       <section class="ch">
         <RadarChart :key="metricsKey" :models="selectedModels" :hidden="hiddenIds" :active-metrics="activeMetrics"

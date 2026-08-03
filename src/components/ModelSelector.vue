@@ -3,7 +3,7 @@ import { computed, ref, nextTick } from 'vue'
 import type { ModelInfo } from '../types'
 
 const props = defineProps<{ models: ModelInfo[]; selected: Set<string>; hidden: Set<string> }>()
-const emit = defineEmits<{ toggle: [id: string]; 'toggle-visibility': [id: string]; selectAll: []; clearAll: []; 'toggle-all-vis': []; hover: [m: ModelInfo | null] }>()
+const emit = defineEmits<{ toggle: [id: string]; 'toggle-visibility': [id: string]; selectAll: []; clearAll: []; 'toggle-all-vis': []; hover: [m: ModelInfo | null]; detail: [id: string] }>()
 
 const q = ref('')
 const provFilter = ref<string | null>(null)
@@ -98,6 +98,9 @@ function toggleAll() {
                 <span v-if="m.intelligenceIndex" class="miq">IQ {{ m.intelligenceIndex }}</span>
               </div>
             </div>
+            <button class="md" @click.stop.prevent="emit('detail', m.id)" title="查看详情">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            </button>
             <button v-if="selected.has(m.id)" class="me" :class="{ off: hidden.has(m.id) }"
               @click.stop.prevent="doVis(m.id)" :title="hidden.has(m.id) ? '显示' : '隐藏'">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -169,6 +172,13 @@ function toggleAll() {
 }
 .mm { display: flex; gap: 8px; font-size: 0.68rem; color: #9ca3af; margin-top: 1px; }
 .miq { color: #6366f1; }
+
+.md {
+  flex-shrink: 0; width: 26px; height: 26px; border: none; border-radius: 6px;
+  background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  color: #6b7280; opacity: 0.35; transition: all 0.15s;
+}
+.md:hover { background: #e5e7eb; opacity: 0.95; color: #2563eb; }
 
 .me {
   flex-shrink: 0; width: 26px; height: 26px; border: none; border-radius: 6px;
