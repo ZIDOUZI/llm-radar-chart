@@ -15,6 +15,7 @@ const VARIANT_SUFFIXES = [
   'reasoning',
   'preview',
   'exp',
+  'effort',
   'extended',
   'latest',
 ]
