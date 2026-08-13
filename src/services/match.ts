@@ -1,6 +1,7 @@
 /**
- * 模型名匹配层:把 arena / artificialanalysis 两边的模型名归一化成可比较的 key。
- * arena 榜的变体后缀(如 (High)、-thinking、-max)会去掉,只保留模型主体。
+ * 模型名匹配层:把 arena / livebench / artificialanalysis 各边的模型名
+ * 归一化成可比较的 key。榜单的变体后缀(如 (High)、-thinking、-max)会去掉,
+ * 只保留模型主体。
  */
 
 /** arena 榜的推理/配置变体后缀,匹配时去掉 */
@@ -47,16 +48,16 @@ export function baseKey(name: string): string {
 }
 
 /**
- * 为每个 AA 模型找最匹配的 arena 模型:
+ * 为每个目标模型找最匹配的源模型:
  * 1. 基础 key 精确匹配(推荐)
  * 2. 包含匹配兜底(一方 key 包含另一方,限制最小长度避免误配)
  */
-export function matchArenaToAa<T extends { id: string; name: string }>(
-  arenaModels: T[],
-  aaModels: { id: string; name: string }[]
+export function matchModelsToTargets<T extends { id: string; name: string }>(
+  sourceModels: T[],
+  targetModels: { id: string; name: string }[]
 ): Map<string, T> {
   const byBase = new Map<string, T[]>()
-  for (const m of arenaModels) {
+  for (const m of sourceModels) {
     const k = baseKey(m.name)
     const arr = byBase.get(k)
     if (arr) arr.push(m)
@@ -64,22 +65,30 @@ export function matchArenaToAa<T extends { id: string; name: string }>(
   }
 
   const result = new Map<string, T>()
-  for (const aa of aaModels) {
-    const k = baseKey(aa.name)
+  for (const target of targetModels) {
+    const k = baseKey(target.name)
     const exact = byBase.get(k)
     if (exact && exact.length) {
-      result.set(aa.id, exact[0])
+      result.set(target.id, exact[0])
       continue
     }
-    const kb = canonicalKey(aa.name)
+    const kb = canonicalKey(target.name)
     if (kb.length >= 6) {
       for (const [ak, arr] of byBase) {
         if (ak.length >= 6 && (ak.includes(kb) || kb.includes(ak))) {
-          result.set(aa.id, arr[0])
+          result.set(target.id, arr[0])
           break
         }
       }
     }
   }
   return result
+}
+
+/** 兼容旧入口:为每个 AA 模型找最匹配的 arena 模型 */
+export function matchArenaToAa<T extends { id: string; name: string }>(
+  arenaModels: T[],
+  aaModels: { id: string; name: string }[]
+): Map<string, T> {
+  return matchModelsToTargets(arenaModels, aaModels)
 }

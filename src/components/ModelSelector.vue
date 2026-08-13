@@ -34,6 +34,12 @@ const totalSel = computed(() => props.selected.size)
 const allSel = computed(() => filtered.value.every(m => props.selected.has(m.id)))
 const visibleCount = computed(() => totalSel.value - props.hidden.size)
 
+function priceLabel(m: ModelInfo): string {
+  if (m.rawPrice > 0) return '$' + m.rawPrice.toFixed(2) + '/1M'
+  if (m.livebenchCost != null) return '$' + m.livebenchCost.toFixed(3) + '/task'
+  return 'Free/1M'
+}
+
 function doToggle(id: string) {
   emit('toggle', id)
   nextTick(() => {
@@ -95,7 +101,7 @@ function toggleAll() {
             <div class="mi" @click="doToggle(m.id)">
               <div class="mn">{{ m.name }}</div>
               <div class="mm">
-                <span>{{ m.rawPrice > 0 ? '$' + m.rawPrice.toFixed(2) : 'Free' }}/1M</span>
+                <span>{{ priceLabel(m) }}</span>
                 <span v-if="m.intelligenceIndex" class="miq">IQ {{ m.intelligenceIndex }}</span>
               </div>
             </div>

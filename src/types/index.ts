@@ -33,7 +33,7 @@ export const METRIC_API_MAP: Record<keyof RadarMetrics, string[]> = {
 }
 
 /** 雷达数据源 */
-export type DataSource = 'aa' | 'arena' | 'sample'
+export type DataSource = 'aa' | 'arena' | 'livebench' | 'sample'
 
 /** arena.ai (LMArena) 排行单行 */
 export interface ArenaLeaderboardRow {
@@ -56,6 +56,26 @@ export interface ArenaApiResponse {
   categories: Record<string, ArenaLeaderboardRow[]>
 }
 
+/** livebench 排行单行 */
+export interface LivebenchRow {
+  key: string            // 模型内部 key(与官方 CSV model 列一致)
+  name: string           // 官方展示名
+  provider: string | null
+  overall: number | null // 官方 Global Average(7 类平均, 0-100)
+  categories: Record<string, number | null> // Reasoning/Coding/Agentic Coding/Mathematics/Data Analysis/Language/IF
+  costPerTask: number | null
+  costPerSuccessfulTask: number | null
+  outputTokens: number | null
+}
+
+/** GET /api/livebench 响应 */
+export interface LivebenchApiResponse {
+  source: 'livebench'
+  release: string
+  generatedAt: string
+  models: LivebenchRow[]
+}
+
 export interface ModelMeta {
   contextWindow: string   // 上下文窗口，如 "1M"
   outputSpeed: string     // 输出速度，如 "153 t/s"
@@ -64,12 +84,13 @@ export interface ModelMeta {
   releaseDate: string     // 发布日期
 }
 
-/** 详情页附加信息:双源对比值与 arena 原始排行 */
+/** 详情页附加信息:多源对比值与各源原始数据 */
 export interface ModelDetailExtra {
   /** 各数据源提供的维度分(0-100,与 metrics 同口径),只含该源实际有的维度 */
   sources?: {
     aa?: Partial<RadarMetrics>
     arena?: Partial<RadarMetrics>
+    livebench?: Partial<RadarMetrics>
   }
   /** arena 原始排行榜信息 */
   arena?: {
@@ -78,6 +99,14 @@ export interface ModelDetailExtra {
     license: string | null
     publishedAt: string | null
     categories: Record<string, { rating: number | null; rank: number | null; votes: number | null }>
+  }
+  /** livebench 原始数据 */
+  livebench?: {
+    release: string
+    overall: number | null
+    categories: Record<string, number | null>
+    costPerTask: number | null
+    costPerSuccessfulTask: number | null
   }
 }
 
@@ -88,6 +117,8 @@ export interface ModelInfo {
   provider: string
   metrics: RadarMetrics
   rawPrice: number
+  /** livebench 每成功任务成本($),仅 livebench 源提供时使用 */
+  livebenchCost?: number | null
   intelligenceIndex: number
   meta: ModelMeta
   detail?: ModelDetailExtra

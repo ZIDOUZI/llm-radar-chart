@@ -4,6 +4,7 @@ import type { ModelInfo } from './types'
 import { METRIC_LABELS } from './types'
 import { getModels, setApiKey, clearApiKey, hasApiKey } from './services/api'
 import { fetchArenaModels } from './services/arena'
+import { fetchLivebenchModels } from './services/livebench'
 import { mergeModels } from './services/merge'
 import type { PreferSource } from './services/merge'
 import ModelSelector from './components/ModelSelector.vue'
@@ -17,11 +18,15 @@ const PREFER_KEY = 'llm-radar-prefer'
 function loadCachedSelected(): string[] { try { const r = localStorage.getItem(SELECTED_CACHE_KEY); return r ? JSON.parse(r) : [] } catch { return [] } }
 function saveCachedSelected(ids: Set<string>) { localStorage.setItem(SELECTED_CACHE_KEY, JSON.stringify([...ids])) }
 function loadPrefer(): PreferSource {
-  try { return localStorage.getItem(PREFER_KEY) === 'arena' ? 'arena' : 'aa' } catch { return 'aa' }
+  try {
+    const v = localStorage.getItem(PREFER_KEY)
+    return v === 'arena' || v === 'livebench' ? v : 'aa'
+  } catch { return 'aa' }
 }
 
 const aaModels = ref<ModelInfo[]>([])
 const arenaModels = ref<ModelInfo[]>([])
+const livebenchModels = ref<ModelInfo[]>([])
 const selectedIds = reactive(new Set<string>())
 const hiddenIds = reactive(new Set<string>())
 const loading = ref(true)
@@ -35,9 +40,10 @@ const showApiKeyInput = ref(false)
 const usingApi = ref(hasApiKey())
 const detailId = ref<string | null>(null)
 const arenaLive = ref(false)
+const livebenchLive = ref(false)
 const prefer = ref<PreferSource>(loadPrefer())
 
-const models = computed(() => mergeModels(aaModels.value, arenaModels.value, prefer.value))
+const models = computed(() => mergeModels(aaModels.value, arenaModels.value, livebenchModels.value, prefer.value))
 const selectedModels = computed(() => models.value.filter(m => selectedIds.has(m.id)))
 const detailModel = computed(() =>
   detailId.value != null ? models.value.find(m => m.id === detailId.value) ?? null : null
@@ -72,10 +78,12 @@ async function loadAllModels() {
   loading.value = true
   error.value = null
   try {
-    const [aa, arena] = await Promise.all([getModels(), fetchArenaModels()])
+    const [aa, arena, livebench] = await Promise.all([getModels(), fetchArenaModels(), fetchLivebenchModels()])
     aaModels.value = aa
     arenaModels.value = arena.models
     arenaLive.value = arena.live
+    livebenchModels.value = livebench.models
+    livebenchLive.value = livebench.live
     usingApi.value = hasApiKey()
     resetSelection()
   } catch (e) {
@@ -88,6 +96,12 @@ async function loadAllModels() {
 function setPrefer(p: PreferSource) {
   prefer.value = p
   try { localStorage.setItem(PREFER_KEY, p) } catch { /* ignore */ }
+}
+
+const FALLBACK_NOTE: Record<PreferSource, string> = {
+  aa: '优先 AA · 缺失回退 Arena/LiveBench',
+  arena: '优先 Arena · 缺失回退 AA/LiveBench',
+  livebench: '优先 LiveBench · 缺失回退 AA/Arena',
 }
 
 onMounted(async () => {
@@ -134,9 +148,11 @@ function toggleMetric(key: string) {
         <div class="src-switch" title="优先显示的数据源,维度缺失时自动回退到另一个">
           <button class="src-btn" :class="{ on: prefer === 'aa' }" @click="setPrefer('aa')">优先 AA</button>
           <button class="src-btn" :class="{ on: prefer === 'arena' }" @click="setPrefer('arena')">优先 Arena</button>
+          <button class="src-btn" :class="{ on: prefer === 'livebench' }" @click="setPrefer('livebench')">优先 LiveBench</button>
         </div>
         <span class="hdr-tag" :class="{ live: usingApi }">AA {{ usingApi ? 'Live' : 'Sample' }}</span>
         <span class="hdr-tag" :class="{ live: arenaLive }">Arena {{ arenaLive ? 'Live' : 'Sample' }}</span>
+        <span class="hdr-tag" :class="{ live: livebenchLive }">LiveBench {{ livebenchLive ? 'Live' : 'Sample' }}</span>
         <button v-if="!usingApi" class="hdr-btn" @click="toggleApiKeyInput">{{ showApiKeyInput ? '取消' : 'Key' }}</button>
         <button v-else class="hdr-btn hdr-btn-x" @click="handleClearApiKey">Clear Key</button>
       </div>
@@ -178,7 +194,7 @@ function toggleMetric(key: string) {
           @toggle-visibility="toggleVisibility" @hover="onModelHover" />
         <ModelTooltip :model="hoveredModel" />
         <div class="ch-foot">
-          <span class="ch-note">{{ prefer === 'arena' ? '优先 Arena · 缺失回退 AA' : '优先 AA · 缺失回退 Arena' }}</span>
+          <span class="ch-note">{{ FALLBACK_NOTE[prefer] }}</span>
         </div>
       </section>
     </div>

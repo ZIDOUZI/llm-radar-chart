@@ -6,6 +6,12 @@ const props = defineProps<{ model: ModelInfo | null }>()
 const x = ref(0)
 const y = ref(0)
 
+function priceLabel(m: ModelInfo): string {
+  if (m.rawPrice > 0) return '$' + m.rawPrice.toFixed(2) + '/1M'
+  if (m.livebenchCost != null) return '$' + m.livebenchCost.toFixed(3) + '/成功任务'
+  return 'Free/1M'
+}
+
 function onMouseMove(e: MouseEvent) {
   x.value = e.clientX
   y.value = e.clientY
@@ -30,7 +36,7 @@ onUnmounted(() => window.removeEventListener('mousemove', onMouseMove))
         <div class="tip-cell"><span class="tip-lbl">首Token</span><span class="tip-val">{{ model.meta.latency }}</span></div>
         <div class="tip-cell"><span class="tip-lbl">模态</span><span class="tip-val">{{ model.meta.modalities }}</span></div>
         <div class="tip-cell"><span class="tip-lbl">发布</span><span class="tip-val">{{ model.meta.releaseDate }}</span></div>
-        <div class="tip-cell"><span class="tip-lbl">价格</span><span class="tip-val">${{ model.rawPrice.toFixed(2) }}/1M</span></div>
+        <div class="tip-cell"><span class="tip-lbl">价格</span><span class="tip-val">{{ priceLabel(model) }}</span></div>
       </div>
     </div>
   </Transition>

@@ -18,6 +18,11 @@ const allMetrics = computed(() => new Set<string>(allMetricKeys))
 const priceText = computed(() =>
   props.model.rawPrice > 0 ? '$' + props.model.rawPrice.toFixed(2) : 'Free'
 )
+const priceSub = computed(() =>
+  props.model.rawPrice > 0 ? 'per 1M tokens'
+    : props.model.livebenchCost != null ? '每成功任务成本'
+    : ''
+)
 
 const extUrl = computed(() => {
   const slug = props.model.slug ?? props.model.id
@@ -25,26 +30,30 @@ const extUrl = computed(() => {
 })
 
 const arenaDetail = computed(() => props.model.detail?.arena ?? null)
+const livebenchDetail = computed(() => props.model.detail?.livebench ?? null)
 const sources = computed(() => props.model.detail?.sources ?? null)
 const arenaCats = computed(() => Object.entries(arenaDetail.value?.categories ?? {}))
+const livebenchCats = computed(() => Object.entries(livebenchDetail.value?.categories ?? {}))
 
-function srcVal(src: 'aa' | 'arena', k: keyof RadarMetrics): number | undefined {
+function srcVal(src: 'aa' | 'arena' | 'livebench', k: keyof RadarMetrics): number | undefined {
   return sources.value?.[src]?.[k]
 }
 
 /** 当前展示的分值来自哪个源(用于标注) */
-function activeSrc(k: keyof RadarMetrics): 'aa' | 'arena' | null {
+function activeSrc(k: keyof RadarMetrics): 'aa' | 'arena' | 'livebench' | null {
   const v = props.model.metrics[k]
   if (v <= 0) return null
   const aa = srcVal('aa', k)
   const ar = srcVal('arena', k)
+  const lb = srcVal('livebench', k)
   if (aa != null && aa === v) return 'aa'
   if (ar != null && ar === v) return 'arena'
+  if (lb != null && lb === v) return 'livebench'
   return null
 }
 
 function hasSourceValue(k: keyof RadarMetrics): boolean {
-  return srcVal('aa', k) != null || srcVal('arena', k) != null
+  return srcVal('aa', k) != null || srcVal('arena', k) != null || srcVal('livebench', k) != null
 }
 
 function fmtRating(r: number | null): string {
@@ -70,6 +79,16 @@ const CATEGORY_LABELS: Record<string, string> = {
   webdev: '网页开发榜',
 }
 
+const LIVEBENCH_CATEGORY_LABELS: Record<string, string> = {
+  Reasoning: '推理',
+  Coding: '编程',
+  'Agentic Coding': '智能体编程',
+  Mathematics: '数学',
+  'Data Analysis': '数据分析',
+  Language: '语言',
+  IF: '指令遵循',
+}
+
 const metaRows = computed(() => {
   const rows: Array<{ label: string; value: string }> = [
     { label: '厂商', value: props.model.provider },
@@ -91,6 +110,13 @@ const metaRows = computed(() => {
       { label: 'Arena 票数', value: arenaDetail.value.votes != null ? arenaDetail.value.votes.toLocaleString() : '—' },
       { label: '许可证', value: arenaDetail.value.license ?? '—' },
       { label: 'Arena 数据日期', value: arenaDetail.value.publishedAt ?? '—' },
+    )
+  }
+  if (livebenchDetail.value) {
+    rows.push(
+      { label: 'LiveBench 总分', value: livebenchDetail.value.overall != null ? livebenchDetail.value.overall.toFixed(1) : '—' },
+      { label: 'LiveBench 成本/成功任务', value: livebenchDetail.value.costPerSuccessfulTask != null ? `$${livebenchDetail.value.costPerSuccessfulTask.toFixed(3)}` : '—' },
+      { label: 'LiveBench 数据版本', value: livebenchDetail.value.release },
     )
   }
   return rows
@@ -124,7 +150,7 @@ const metaRows = computed(() => {
       <div class="dc">
         <div class="dc-lbl">价格</div>
         <div class="dc-val">{{ priceText }}</div>
-        <div class="dc-sub">per 1M tokens</div>
+        <div class="dc-sub">{{ priceSub }}</div>
       </div>
       <div class="dc">
         <div class="dc-lbl">输出速度</div>
@@ -175,6 +201,7 @@ const metaRows = computed(() => {
             <div v-if="hasSourceValue(k)" class="dm-srcs">
               <span v-if="srcVal('aa', k) != null" class="dms" :class="{ on: activeSrc(k) === 'aa' }">AA {{ srcVal('aa', k) }}</span>
               <span v-if="srcVal('arena', k) != null" class="dms" :class="{ on: activeSrc(k) === 'arena' }">Arena {{ srcVal('arena', k) }}</span>
+              <span v-if="srcVal('livebench', k) != null" class="dms" :class="{ on: activeSrc(k) === 'livebench' }">LiveBench {{ srcVal('livebench', k) }}</span>
             </div>
           </div>
         </div>
@@ -198,6 +225,36 @@ const metaRows = computed(() => {
             <td class="d-meta-val">{{ fmtRating(v.rating) }}</td>
             <td class="d-meta-val">{{ v.rank != null ? '#' + v.rank : '—' }}</td>
             <td class="d-meta-val">{{ v.votes != null ? v.votes.toLocaleString() : '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section v-if="livebenchDetail" class="d-panel">
+      <h2 class="d-panel-h">LiveBench 数据 ({{ livebenchDetail.release }})</h2>
+      <table class="d-meta">
+        <thead>
+          <tr>
+            <th class="d-meta-lbl">类别</th>
+            <th class="d-meta-lbl">得分</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="d-meta-val">总分 (Global Average)</td>
+            <td class="d-meta-val">{{ livebenchDetail.overall != null ? livebenchDetail.overall.toFixed(2) : '—' }}</td>
+          </tr>
+          <tr v-for="[cat, v] in livebenchCats" :key="cat">
+            <td class="d-meta-val">{{ LIVEBENCH_CATEGORY_LABELS[cat] ?? cat }}</td>
+            <td class="d-meta-val">{{ v != null ? v.toFixed(1) : '—' }}</td>
+          </tr>
+          <tr>
+            <td class="d-meta-val">成本 / 问题</td>
+            <td class="d-meta-val">{{ livebenchDetail.costPerTask != null ? '$' + livebenchDetail.costPerTask.toFixed(4) : '—' }}</td>
+          </tr>
+          <tr>
+            <td class="d-meta-val">成本 / 成功任务</td>
+            <td class="d-meta-val">{{ livebenchDetail.costPerSuccessfulTask != null ? '$' + livebenchDetail.costPerSuccessfulTask.toFixed(3) : '—' }}</td>
           </tr>
         </tbody>
       </table>
