@@ -12,7 +12,7 @@
  * RELEASES(最新在前)即可。
  */
 import type { LivebenchApiResponse, LivebenchRow } from '../src/types'
-import modelNames from './livebenchModelNames.json'
+import { livebenchModelNames } from './livebenchModelNames'
 
 const LIVEBENCH_BASE = 'https://livebench.ai'
 const RELEASES = [
@@ -197,7 +197,7 @@ async function fetchRelease(release: string): Promise<{ models: LivebenchRow[]; 
   const costRows = costText ? parseCsv(costText) : []
   const costMap = new Map(costRows.map((r) => [String(r['model'] ?? ''), r]))
   const models = parseCsv(tableText)
-    .map((row) => normalizeRow(row, categories, modelNames as unknown as Record<string, NameEntry>, costMap.get(String(row['model'] ?? ''))))
+    .map((row) => normalizeRow(row, categories, livebenchModelNames, costMap.get(String(row['model'] ?? ''))))
     .filter((r) => r.key)
   return models.length ? { models, release } : null
 }
