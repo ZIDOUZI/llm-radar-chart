@@ -30,6 +30,15 @@ const capabilityKey = ref<keyof RadarMetrics>('intelligence')
 const activeId = ref<string | null>(null)
 const hoverId = ref<string | null>(null)
 let chart: ChartJS<'scatter'> | null = null
+
+/** 点少时尝试直接显示模型名;阈值内且不重叠才画 */
+const LABEL_MAX_COUNT = 10
+
+function shortName(name: string): string {
+  const base = name.replace(/\s*\(.*$/, '')
+  return base.length > 16 ? base.slice(0, 15) + '…' : base
+}
+
 function onCanvasLeave() {
   hoverId.value = null
   chart?.draw()
@@ -243,6 +252,64 @@ const quadrantPlugin = {
   },
 }
 
+/** 点数较少且名称不重叠时, 在点旁绘制小名称标签 */
+const labelPlugin = {
+  id: 'point-labels',
+  afterDatasetsDraw(pluginChart: unknown) {
+    const c = pluginChart as ChartJS<'scatter'>
+    if (!c.chartArea || plottable.value.length === 0 || plottable.value.length > LABEL_MAX_COUNT) return
+    const { left, right, top, bottom } = c.chartArea
+    const ctx = c.ctx
+    const textH = 12
+    ctx.save()
+    ctx.font = '10px Inter, sans-serif'
+    ctx.textBaseline = 'middle'
+
+    const points = plottable.value.map((_, i) => {
+      const pt = c.getDatasetMeta(i).data[0]
+      return pt ? { x: pt.x, y: pt.y } : null
+    })
+    const placed: { x: number; y: number; w: number; h: number }[] = []
+
+    const hitsPoint = (r: { x: number; y: number; w: number; h: number }, px: number, py: number) => {
+      const cx = Math.max(r.x, Math.min(px, r.x + r.w))
+      const cy = Math.max(r.y, Math.min(py, r.y + r.h))
+      return (px - cx) ** 2 + (py - cy) ** 2 < 6 * 6
+    }
+
+    for (let i = 0; i < plottable.value.length; i++) {
+      const p = points[i]
+      if (!p) continue
+      const text = shortName(plottable.value[i].name)
+      const w = ctx.measureText(text).width + 6
+      let lx = p.x + 8
+      if (lx + w > right - 2) lx = p.x - 8 - w
+      const ly = p.y - textH / 2
+      const rect = { x: lx, y: ly, w, h: textH }
+
+      if (rect.x < left + 2 || rect.x + rect.w > right - 2 || rect.y < top + 2 || rect.y + rect.h > bottom - 2) continue
+      const overlapsLabel = placed.some(
+        (r) => rect.x < r.x + r.w && rect.x + rect.w > r.x && rect.y < r.y + r.h && rect.y + rect.h > r.y
+      )
+      const coversPoint = points.some((q) => q && hitsPoint(rect, q.x, q.y))
+      if (overlapsLabel || coversPoint) continue
+
+      placed.push(rect)
+      ctx.fillStyle = 'rgba(255,255,255,0.88)'
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath()
+        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4)
+        ctx.fill()
+      } else {
+        ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
+      }
+      ctx.fillStyle = 'rgba(31,41,55,0.92)'
+      ctx.fillText(text, rect.x + 3, rect.y + textH / 2)
+    }
+    ctx.restore()
+  },
+}
+
 function render() {
   if (!canvas.value) {
     if (chart) {
@@ -254,7 +321,7 @@ function render() {
   const data = buildData()
   const options = buildOptions()
   if (!chart) {
-    chart = new ChartJS(canvas.value, { type: 'scatter', data, options }, [quadrantPlugin])
+    chart = new ChartJS(canvas.value, { type: 'scatter', data, options }, [quadrantPlugin, labelPlugin])
   } else {
     chart.data = data
     chart.options = options
