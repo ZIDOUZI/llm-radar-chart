@@ -73,9 +73,9 @@ const plottable = computed(() =>
   )
 )
 
-/** 当前展示的模型:悬停优先, 未悬停时用已点击固定的 */
+/** 当前展示的模型:点击固定的优先(叠加层常驻), 未点击时跟随悬停 */
 const displayModel = computed(() => {
-  const id = hoverId.value ?? activeId.value
+  const id = activeId.value ?? hoverId.value
   return plottable.value.find((m) => m.id === id) ?? null
 })
 
@@ -315,7 +315,7 @@ const labelPlugin = {
       return pt ? { x: pt.x, y: pt.y } : null
     })
     const placed: { x: number; y: number; w: number; h: number }[] = []
-    const selIdx = plottable.value.findIndex((m) => m.id === (hoverId.value ?? activeId.value))
+    const selIdx = plottable.value.findIndex((m) => m.id === (activeId.value ?? hoverId.value))
 
     const hitsPoint = (r: { x: number; y: number; w: number; h: number }, px: number, py: number) => {
       const cx = Math.max(r.x, Math.min(px, r.x + r.w))
@@ -328,29 +328,35 @@ const labelPlugin = {
       if (!p) return
       const text = shortName(plottable.value[i].name)
       const w = ctx.measureText(text).width + 6
-      let lx = p.x + 8
-      if (lx + w > right - 2) lx = p.x - 8 - w
-      const ly = p.y - textH / 2
-      const rect = { x: lx, y: ly, w, h: textH }
+      // 依次尝试: 右侧 → 左侧 → 上方 → 下方, 找第一个不越界且不挤占的位置
+      const candidates = [
+        { x: p.x + 8, y: p.y - textH / 2 },
+        { x: p.x - 8 - w, y: p.y - textH / 2 },
+        { x: p.x - w / 2, y: p.y - textH - 8 },
+        { x: p.x - w / 2, y: p.y + 8 },
+      ]
+      for (const cand of candidates) {
+        const rect = { x: cand.x, y: cand.y, w, h: textH }
+        if (rect.x < left + 2 || rect.x + rect.w > right - 2 || rect.y < top + 2 || rect.y + rect.h > bottom - 2) continue
+        const overlapsLabel = placed.some(
+          (r) => rect.x < r.x + r.w && rect.x + rect.w > r.x && rect.y < r.y + r.h && rect.y + rect.h > r.y
+        )
+        const coversPoint = points.some((q) => q && hitsPoint(rect, q.x, q.y))
+        if (!force && (overlapsLabel || coversPoint)) continue
 
-      if (rect.x < left + 2 || rect.x + rect.w > right - 2 || rect.y < top + 2 || rect.y + rect.h > bottom - 2) return
-      const overlapsLabel = placed.some(
-        (r) => rect.x < r.x + r.w && rect.x + rect.w > r.x && rect.y < r.y + r.h && rect.y + rect.h > r.y
-      )
-      const coversPoint = points.some((q) => q && hitsPoint(rect, q.x, q.y))
-      if (!force && (overlapsLabel || coversPoint)) return
-
-      placed.push(rect)
-      ctx.fillStyle = 'rgba(255,255,255,0.88)'
-      if (typeof ctx.roundRect === 'function') {
-        ctx.beginPath()
-        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4)
-        ctx.fill()
-      } else {
-        ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
+        placed.push(rect)
+        ctx.fillStyle = 'rgba(255,255,255,0.9)'
+        if (typeof ctx.roundRect === 'function') {
+          ctx.beginPath()
+          ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4)
+          ctx.fill()
+        } else {
+          ctx.fillRect(rect.x, rect.y, rect.w, rect.h)
+        }
+        ctx.fillStyle = 'rgba(31,41,55,0.92)'
+        ctx.fillText(text, rect.x + 3, rect.y + textH / 2)
+        return
       }
-      ctx.fillStyle = 'rgba(31,41,55,0.92)'
-      ctx.fillText(text, rect.x + 3, rect.y + textH / 2)
     }
 
     if (selIdx >= 0) drawLabel(selIdx, true)
