@@ -9,6 +9,7 @@ import { mergeModels } from './services/merge'
 import type { PreferSource } from './services/merge'
 import ModelSelector from './components/ModelSelector.vue'
 import RadarChart from './components/RadarChart.vue'
+import PriceCapabilityChart from './components/PriceCapabilityChart.vue'
 import ModelTooltip from './components/ModelTooltip.vue'
 import ModelDetail from './components/ModelDetail.vue'
 
@@ -42,6 +43,7 @@ const detailId = ref<string | null>(null)
 const arenaLive = ref(false)
 const livebenchLive = ref(false)
 const prefer = ref<PreferSource>(loadPrefer())
+const chartMode = ref<'radar' | 'price'>('radar')
 
 const models = computed(() => mergeModels(aaModels.value, arenaModels.value, livebenchModels.value, prefer.value))
 const selectedModels = computed(() => models.value.filter(m => selectedIds.has(m.id)))
@@ -113,6 +115,7 @@ onMounted(async () => {
 onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
 
 function toggleModel(id: string) { selectedIds.has(id) ? (selectedIds.delete(id), hiddenIds.delete(id)) : selectedIds.add(id) }
+function ensureSelected(id: string) { if (!selectedIds.has(id)) selectedIds.add(id) }
 function toggleVisibility(id: string) { hiddenIds.has(id) ? hiddenIds.delete(id) : hiddenIds.add(id) }
 function clearAll() { selectedIds.clear(); hiddenIds.clear() }
 function selectAll() {}
@@ -190,9 +193,15 @@ function toggleMetric(key: string) {
           @toggle-all-vis="toggleAllVisibility" @hover="onModelHover" @detail="openDetail" />
       </aside>
       <section class="ch">
-        <RadarChart :key="metricsKey" :models="selectedModels" :hidden="hiddenIds" :active-metrics="activeMetrics"
-          @toggle-visibility="toggleVisibility" @hover="onModelHover" />
-        <ModelTooltip :model="hoveredModel" />
+        <div class="ch-tabs">
+          <button class="ch-tab" :class="{ on: chartMode === 'radar' }" @click="chartMode = 'radar'">雷达对比</button>
+          <button class="ch-tab" :class="{ on: chartMode === 'price' }" @click="chartMode = 'price'">价格-能力</button>
+        </div>
+        <RadarChart v-if="chartMode === 'radar'" :key="metricsKey" :models="selectedModels" :hidden="hiddenIds"
+          :active-metrics="activeMetrics" @toggle-visibility="toggleVisibility" @hover="onModelHover" />
+        <PriceCapabilityChart v-else :models="models" :hidden="hiddenIds" :selected-ids="selectedIds"
+          @select="ensureSelected" />
+        <ModelTooltip v-if="chartMode === 'radar'" :model="hoveredModel" />
         <div class="ch-foot">
           <span class="ch-note">{{ FALLBACK_NOTE[prefer] }}</span>
         </div>
@@ -278,6 +287,33 @@ body {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 6px;
   padding: 12px 16px 10px; overflow: hidden;
+}
+.ch-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.ch-tab {
+  padding: 4px 14px;
+  border: none;
+  background: #fff;
+  font-size: 0.72rem;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ch-tab + .ch-tab {
+  border-left: 1px solid #e5e7eb;
+}
+.ch-tab:hover {
+  background: #f9fafb;
+}
+.ch-tab.on {
+  background: #2563eb;
+  color: #fff;
 }
 .ch-foot { display: flex; align-items: center; gap: 12px; }
 .ch-note { font-size: 0.7rem; color: #9ca3af; }
