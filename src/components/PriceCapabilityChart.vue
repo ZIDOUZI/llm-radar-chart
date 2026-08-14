@@ -41,7 +41,6 @@ function shortName(name: string): string {
 
 function onCanvasLeave() {
   hoverId.value = null
-  chart?.draw()
 }
 
 const capOptions = computed(() =>
@@ -330,17 +329,17 @@ function render() {
 }
 
 watch(
-  () => [
-    props.models,
-    props.hidden,
-    props.selectedIds,
-    capabilityKey.value,
-    activeId.value,
-    hoverId.value,
-  ],
+  () => [props.models, props.hidden, props.selectedIds, capabilityKey.value],
   render,
   { deep: true, flush: 'post' }
 )
+
+// 悬停/点击固定只改样式, 用无动画更新, 避免反复重播入场动画
+watch([activeId, hoverId], () => {
+  if (!chart) return
+  chart.data = buildData()
+  chart.update('none')
+})
 
 function pickActive(id: string) {
   activeId.value = id
