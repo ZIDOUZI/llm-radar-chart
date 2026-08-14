@@ -101,8 +101,8 @@ function buildData(): ChartData<'scatter'> {
     const inQuadrant =
       !!sel &&
       m.id !== sel.id &&
-      m.rawPrice >= selPrice &&
-      (m.metrics[capabilityKey.value] ?? 0) <= selCap
+      m.rawPrice > selPrice &&
+      (m.metrics[capabilityKey.value] ?? 0) < selCap
     const emphasized = isActive || isHovered || inQuadrant
     return {
       label: m.name,
@@ -219,34 +219,52 @@ function pickIndexAt(e: Event, c: ChartJS<'scatter'>): number | null {
   return null
 }
 
-/** 悬停时在图上绘制「价格更高 · 能力更低」方形叠加层 */
-const quadrantPlugin = {
-  id: 'quadrant-overlay',
+/** 悬停/选中时, 用叠加框把「价格更高 · 能力更低」的点整体框出来 */
+const worseBoxPlugin = {
+  id: 'worse-box-overlay',
   afterDatasetsDraw(pluginChart: unknown) {
     const c = pluginChart as ChartJS<'scatter'>
     const m = displayModel.value
-    if (!m || !c.chartArea) return
-    const { left, right, bottom, top } = c.chartArea
+    if (!m || !c.chartArea || !worseDeals.value.length) return
+    const { left, right, top, bottom } = c.chartArea
     const cap = m.metrics[capabilityKey.value] ?? 0
     if (cap <= 0 || m.rawPrice <= 0) return
 
-    const x0 = c.scales.x.getPixelForValue(m.rawPrice)
-    const y1 = c.scales.y.getPixelForValue(cap)
-    if (x0 >= right || y1 <= top) return
+    const pts = worseDeals.value
+      .map((wm) => ({
+        x: c.scales.x.getPixelForValue(wm.rawPrice),
+        y: c.scales.y.getPixelForValue(wm.metrics[capabilityKey.value] ?? 0),
+      }))
+      .filter((p) => p.x >= left && p.x <= right && p.y >= top && p.y <= bottom)
+    if (!pts.length) return
 
+    const pad = 10
+    const x0 = Math.min(...pts.map((p) => p.x)) - pad
+    const x1 = Math.max(...pts.map((p) => p.x)) + pad
+    const y0 = Math.min(...pts.map((p) => p.y)) - pad
+    const y1 = Math.max(...pts.map((p) => p.y)) + pad
     const ctx = c.ctx
     ctx.save()
-    ctx.fillStyle = 'rgba(220,38,38,0.08)'
-    ctx.strokeStyle = 'rgba(220,38,38,0.55)'
+    ctx.fillStyle = 'rgba(220,38,38,0.07)'
+    ctx.strokeStyle = 'rgba(220,38,38,0.65)'
     ctx.setLineDash([6, 4])
     ctx.lineWidth = 1.5
-    ctx.fillRect(x0, y1, right - x0, bottom - y1)
-    ctx.strokeRect(x0, y1, right - x0, bottom - y1)
+    ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x0, y0, x1 - x0, y1 - y0, 8)
+    } else {
+      ctx.rect(x0, y0, x1 - x0, y1 - y0)
+    }
+    ctx.fill()
+    ctx.stroke()
     ctx.setLineDash([])
     ctx.fillStyle = 'rgba(220,38,38,0.9)'
     ctx.font = '11px Inter, sans-serif'
-    const label = '价格更高 · 能力更低'
-    ctx.fillText(label, Math.max(left + 4, Math.min(x0 + 8, right - 150)), y1 + 14)
+    ctx.fillText(
+      `价格更高 · 能力更低 ×${pts.length}`,
+      Math.max(left + 4, x0),
+      Math.max(top + 12, y0 - 6)
+    )
     ctx.restore()
   },
 }
@@ -320,7 +338,7 @@ function render() {
   const data = buildData()
   const options = buildOptions()
   if (!chart) {
-    chart = new ChartJS(canvas.value, { type: 'scatter', data, options }, [quadrantPlugin, labelPlugin])
+    chart = new ChartJS(canvas.value, { type: 'scatter', data, options }, [worseBoxPlugin, labelPlugin])
   } else {
     chart.data = data
     chart.options = options
@@ -364,7 +382,7 @@ onUnmounted(() => {
       <select class="pcc-sel" :value="capabilityKey" @change="onCapabilityChange">
         <option v-for="[k, label] in capOptions" :key="k" :value="k">{{ label }}</option>
       </select>
-      <span class="pcc-hint">悬停散点高亮「价格更高·能力更低」区域 · 点击固定查看列表</span>
+      <span class="pcc-hint">悬停散点框出「价格更高·能力更低」的模型 · 点击固定查看列表</span>
     </div>
 
     <div v-if="!plottable.length" class="pcc-empty">
