@@ -29,18 +29,32 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const capabilityKey = ref<keyof RadarMetrics>('intelligence')
 const activeId = ref<string | null>(null)
 const hoverId = ref<string | null>(null)
+const showLabels = ref(true)
 let chart: ChartJS<'scatter'> | null = null
 
-/** 点少时尝试直接显示模型名;阈值内且不重叠才画 */
-const LABEL_MAX_COUNT = 10
+/** 除悬停/选中模型外, 最多给多少个点尝试画名称 */
+const LABEL_OTHER_MAX = 40
 
 function shortName(name: string): string {
   const base = name.replace(/\s*\(.*$/, '')
   return base.length > 16 ? base.slice(0, 15) + '…' : base
 }
 
+let rafPending = false
+function scheduleDraw() {
+  if (rafPending) return
+  rafPending = true
+  requestAnimationFrame(() => {
+    rafPending = false
+    chart?.draw()
+  })
+}
+
 function onCanvasLeave() {
-  hoverId.value = null
+  if (hoverId.value !== null) {
+    hoverId.value = null
+    scheduleDraw()
+  }
 }
 
 const capOptions = computed(() =>
@@ -82,6 +96,11 @@ function onCapabilityChange(e: Event) {
   if (v !== 'price') capabilityKey.value = v
 }
 
+function toggleLabels() {
+  showLabels.value = !showLabels.value
+  scheduleDraw()
+}
+
 function priceAxisRange() {
   const prices = plottable.value.map((m) => m.rawPrice)
   let min = Math.pow(10, Math.floor(Math.log10(Math.min(...prices))))
@@ -91,30 +110,17 @@ function priceAxisRange() {
 }
 
 function buildData(): ChartData<'scatter'> {
-  const sel = displayModel.value
-  const selCap = sel?.metrics[capabilityKey.value] ?? 0
-  const selPrice = sel?.rawPrice ?? 0
   const datasets: ChartData<'scatter'>['datasets'] = plottable.value.map((m, i) => {
     const c = getProviderColor(m.provider, i)
-    const isHovered = m.id === hoverId.value
-    const isActive = m.id === activeId.value
-    const inQuadrant =
-      !!sel &&
-      m.id !== sel.id &&
-      m.rawPrice > selPrice &&
-      (m.metrics[capabilityKey.value] ?? 0) < selCap
-    const emphasized = isActive || isHovered || inQuadrant
     return {
       label: m.name,
       data: [{ x: m.rawPrice, y: m.metrics[capabilityKey.value] ?? 0 }],
-      backgroundColor:
-        isActive || isHovered ? '#2563eb' : inQuadrant ? c.border : hexToRgba(c.border, 0.35),
-      borderColor: isActive || isHovered ? '#1d4ed8' : c.border,
-      borderWidth: emphasized ? 2 : 1,
-      pointRadius: isActive || isHovered ? 8 : inQuadrant ? 7 : 5,
-      pointHoverRadius: 9,
+      backgroundColor: hexToRgba(c.border, 0.75),
+      borderColor: c.border,
+      borderWidth: 1.5,
+      pointRadius: 5,
+      pointHoverRadius: 8,
       pointHitRadius: 12,
-      order: emphasized ? 0 : 1,
     }
   })
   return { datasets }
@@ -183,7 +189,11 @@ function buildOptions(): ChartOptions<'scatter'> {
     },
     onHover: (e, _els, c) => {
       const idx = pickIndexAt(e.native, c)
-      hoverId.value = idx != null ? (plottable.value[idx]?.id ?? null) : null
+      const next = idx != null ? (plottable.value[idx]?.id ?? null) : null
+      if (next !== hoverId.value) {
+        hoverId.value = next
+        scheduleDraw()
+      }
       if (canvas.value) canvas.value.style.cursor = idx != null ? 'pointer' : 'default'
     },
     onClick: (e: ChartEvent, _els: ActiveElement[], c: ChartJS<'scatter'>) => {
@@ -196,6 +206,7 @@ function buildOptions(): ChartOptions<'scatter'> {
       activeId.value = m.id
       hoverId.value = m.id
       emit('select', m.id)
+      scheduleDraw()
     },
   }
 }
@@ -219,62 +230,79 @@ function pickIndexAt(e: Event, c: ChartJS<'scatter'>): number | null {
   return null
 }
 
-/** 悬停/选中时, 用叠加框把「价格更高 · 能力更低」的点整体框出来 */
-const worseBoxPlugin = {
-  id: 'worse-box-overlay',
+/** 悬停/选中时, 绘制从该点延伸到图表底部和右侧的矩形区域 */
+const quadrantPlugin = {
+  id: 'quadrant-overlay',
   afterDatasetsDraw(pluginChart: unknown) {
     const c = pluginChart as ChartJS<'scatter'>
     const m = displayModel.value
-    if (!m || !c.chartArea || !worseDeals.value.length) return
+    if (!m || !c.chartArea) return
     const { left, right, top, bottom } = c.chartArea
     const cap = m.metrics[capabilityKey.value] ?? 0
     if (cap <= 0 || m.rawPrice <= 0) return
 
-    const pts = worseDeals.value
-      .map((wm) => ({
-        x: c.scales.x.getPixelForValue(wm.rawPrice),
-        y: c.scales.y.getPixelForValue(wm.metrics[capabilityKey.value] ?? 0),
-      }))
-      .filter((p) => p.x >= left && p.x <= right && p.y >= top && p.y <= bottom)
-    if (!pts.length) return
+    const x0 = c.scales.x.getPixelForValue(m.rawPrice)
+    const y1 = c.scales.y.getPixelForValue(cap)
+    if (x0 >= right || y1 <= top) return
 
-    const pad = 10
-    const x0 = Math.min(...pts.map((p) => p.x)) - pad
-    const x1 = Math.max(...pts.map((p) => p.x)) + pad
-    const y0 = Math.min(...pts.map((p) => p.y)) - pad
-    const y1 = Math.max(...pts.map((p) => p.y)) + pad
     const ctx = c.ctx
     ctx.save()
-    ctx.fillStyle = 'rgba(220,38,38,0.07)'
-    ctx.strokeStyle = 'rgba(220,38,38,0.65)'
+    ctx.fillStyle = 'rgba(220,38,38,0.08)'
+    ctx.strokeStyle = 'rgba(220,38,38,0.55)'
     ctx.setLineDash([6, 4])
     ctx.lineWidth = 1.5
-    ctx.beginPath()
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(x0, y0, x1 - x0, y1 - y0, 8)
-    } else {
-      ctx.rect(x0, y0, x1 - x0, y1 - y0)
-    }
-    ctx.fill()
-    ctx.stroke()
+    ctx.fillRect(x0, y1, right - x0, bottom - y1)
+    ctx.strokeRect(x0, y1, right - x0, bottom - y1)
     ctx.setLineDash([])
     ctx.fillStyle = 'rgba(220,38,38,0.9)'
     ctx.font = '11px Inter, sans-serif'
-    ctx.fillText(
-      `价格更高 · 能力更低 ×${pts.length}`,
-      Math.max(left + 4, x0),
-      Math.max(top + 12, y0 - 6)
-    )
+    ctx.fillText('价格更高 · 能力更低', Math.max(left + 4, Math.min(x0 + 8, right - 150)), y1 + 14)
     ctx.restore()
   },
 }
 
-/** 点数较少且名称不重叠时, 在点旁绘制小名称标签 */
+/** 悬停/选中/框内点的高亮圈 */
+const hoverHighlightPlugin = {
+  id: 'hover-highlight',
+  afterDatasetsDraw(pluginChart: unknown) {
+    const c = pluginChart as ChartJS<'scatter'>
+    if (!c.chartArea) return
+    const sel = displayModel.value
+    const selCap = sel?.metrics[capabilityKey.value] ?? 0
+    const selPrice = sel?.rawPrice ?? 0
+    const ctx = c.ctx
+    ctx.save()
+    for (let i = 0; i < plottable.value.length; i++) {
+      const m = plottable.value[i]
+      const pt = c.getDatasetMeta(i).data[0]
+      if (!pt) continue
+      const isActive = m.id === activeId.value
+      const isHovered = m.id === hoverId.value
+      const inQuadrant =
+        !!sel &&
+        m.id !== sel.id &&
+        m.rawPrice > selPrice &&
+        (m.metrics[capabilityKey.value] ?? 0) < selCap
+      if (!isActive && !isHovered && !inQuadrant) continue
+      const col = getProviderColor(m.provider, i).border
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, isActive || isHovered ? 9 : 7, 0, Math.PI * 2)
+      ctx.fillStyle = isActive || isHovered ? 'rgba(37,99,235,0.18)' : 'rgba(220,38,38,0.12)'
+      ctx.fill()
+      ctx.strokeStyle = isActive || isHovered ? '#2563eb' : col
+      ctx.lineWidth = isActive || isHovered ? 2.5 : 2
+      ctx.stroke()
+    }
+    ctx.restore()
+  },
+}
+
+/** 名称标签: 悬停/选中的始终显示; 其余在按钮开启且不重叠时显示 */
 const labelPlugin = {
   id: 'point-labels',
   afterDatasetsDraw(pluginChart: unknown) {
     const c = pluginChart as ChartJS<'scatter'>
-    if (!c.chartArea || plottable.value.length === 0 || plottable.value.length > LABEL_MAX_COUNT) return
+    if (!c.chartArea || plottable.value.length === 0) return
     const { left, right, top, bottom } = c.chartArea
     const ctx = c.ctx
     const textH = 12
@@ -287,6 +315,7 @@ const labelPlugin = {
       return pt ? { x: pt.x, y: pt.y } : null
     })
     const placed: { x: number; y: number; w: number; h: number }[] = []
+    const selIdx = plottable.value.findIndex((m) => m.id === (hoverId.value ?? activeId.value))
 
     const hitsPoint = (r: { x: number; y: number; w: number; h: number }, px: number, py: number) => {
       const cx = Math.max(r.x, Math.min(px, r.x + r.w))
@@ -294,9 +323,9 @@ const labelPlugin = {
       return (px - cx) ** 2 + (py - cy) ** 2 < 6 * 6
     }
 
-    for (let i = 0; i < plottable.value.length; i++) {
+    const drawLabel = (i: number, force: boolean) => {
       const p = points[i]
-      if (!p) continue
+      if (!p) return
       const text = shortName(plottable.value[i].name)
       const w = ctx.measureText(text).width + 6
       let lx = p.x + 8
@@ -304,12 +333,12 @@ const labelPlugin = {
       const ly = p.y - textH / 2
       const rect = { x: lx, y: ly, w, h: textH }
 
-      if (rect.x < left + 2 || rect.x + rect.w > right - 2 || rect.y < top + 2 || rect.y + rect.h > bottom - 2) continue
+      if (rect.x < left + 2 || rect.x + rect.w > right - 2 || rect.y < top + 2 || rect.y + rect.h > bottom - 2) return
       const overlapsLabel = placed.some(
         (r) => rect.x < r.x + r.w && rect.x + rect.w > r.x && rect.y < r.y + r.h && rect.y + rect.h > r.y
       )
       const coversPoint = points.some((q) => q && hitsPoint(rect, q.x, q.y))
-      if (overlapsLabel || coversPoint) continue
+      if (!force && (overlapsLabel || coversPoint)) return
 
       placed.push(rect)
       ctx.fillStyle = 'rgba(255,255,255,0.88)'
@@ -322,6 +351,13 @@ const labelPlugin = {
       }
       ctx.fillStyle = 'rgba(31,41,55,0.92)'
       ctx.fillText(text, rect.x + 3, rect.y + textH / 2)
+    }
+
+    if (selIdx >= 0) drawLabel(selIdx, true)
+    if (showLabels.value && plottable.value.length <= LABEL_OTHER_MAX) {
+      for (let i = 0; i < plottable.value.length; i++) {
+        if (i !== selIdx) drawLabel(i, false)
+      }
     }
     ctx.restore()
   },
@@ -338,7 +374,15 @@ function render() {
   const data = buildData()
   const options = buildOptions()
   if (!chart) {
-    chart = new ChartJS(canvas.value, { type: 'scatter', data, options }, [worseBoxPlugin, labelPlugin])
+    chart = new ChartJS(
+      canvas.value,
+      {
+        type: 'scatter',
+        data,
+        options,
+        plugins: [quadrantPlugin, hoverHighlightPlugin, labelPlugin],
+      }
+    )
   } else {
     chart.data = data
     chart.options = options
@@ -351,13 +395,6 @@ watch(
   render,
   { deep: true, flush: 'post' }
 )
-
-// 悬停/点击固定只改样式, 用无动画更新, 避免反复重播入场动画
-watch([activeId, hoverId], () => {
-  if (!chart) return
-  chart.data = buildData()
-  chart.update('none')
-})
 
 function pickActive(id: string) {
   activeId.value = id
@@ -382,7 +419,10 @@ onUnmounted(() => {
       <select class="pcc-sel" :value="capabilityKey" @change="onCapabilityChange">
         <option v-for="[k, label] in capOptions" :key="k" :value="k">{{ label }}</option>
       </select>
-      <span class="pcc-hint">悬停散点框出「价格更高·能力更低」的模型 · 点击固定查看列表</span>
+      <button class="pcc-lbl-btn" :class="{ on: showLabels }" @click="toggleLabels">
+        名称 {{ showLabels ? '开' : '关' }}
+      </button>
+      <span class="pcc-hint">悬停散点显示矩形区域 · 点击固定查看列表</span>
     </div>
 
     <div v-if="!plottable.length" class="pcc-empty">
@@ -470,6 +510,26 @@ onUnmounted(() => {
 .pcc-sel:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+.pcc-lbl-btn {
+  padding: 4px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #6b7280;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pcc-lbl-btn:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+.pcc-lbl-btn.on {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
 }
 .pcc-hint {
   font-size: 0.7rem;
