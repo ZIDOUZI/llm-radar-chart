@@ -28,25 +28,38 @@ const emit = defineEmits<{
 const canvas = ref<HTMLCanvasElement | null>(null)
 const capabilityKey = ref<keyof RadarMetrics>('intelligence')
 const activeId = ref<string | null>(null)
+const hoverId = ref<string | null>(null)
 let chart: ChartJS<'scatter'> | null = null
+function onCanvasLeave() {
+  hoverId.value = null
+  chart?.draw()
+}
 
 const capOptions = computed(() =>
   (Object.entries(METRIC_LABELS) as [keyof RadarMetrics, string][])
     .filter(([k]) => k !== 'price')
 )
 
-/** 可绘制的模型:未被隐藏、有真实价格、所选能力维度有分 */
+/** 可绘制的模型:左侧已选中、未被隐藏、有真实价格、所选能力维度有分 */
 const plottable = computed(() =>
   props.models.filter(
-    (m) => !props.hidden.has(m.id) && m.rawPrice > 0 && (m.metrics[capabilityKey.value] ?? 0) > 0
+    (m) =>
+      props.selectedIds.has(m.id) &&
+      !props.hidden.has(m.id) &&
+      m.rawPrice > 0 &&
+      (m.metrics[capabilityKey.value] ?? 0) > 0
   )
 )
 
-const activeModel = computed(() => props.models.find((m) => m.id === activeId.value) ?? null)
+/** 当前展示的模型:悬停优先, 未悬停时用已点击固定的 */
+const displayModel = computed(() => {
+  const id = hoverId.value ?? activeId.value
+  return plottable.value.find((m) => m.id === id) ?? null
+})
 
 /** 价格更高但能力更低(相对选中模型) */
 const worseDeals = computed<ModelInfo[]>(() => {
-  const sel = activeModel.value
+  const sel = displayModel.value
   if (!sel) return []
   const cap = capabilityKey.value
   const selCap = sel.metrics[cap] ?? 0
@@ -70,20 +83,30 @@ function priceAxisRange() {
 }
 
 function buildData(): ChartData<'scatter'> {
+  const sel = displayModel.value
+  const selCap = sel?.metrics[capabilityKey.value] ?? 0
+  const selPrice = sel?.rawPrice ?? 0
   const datasets: ChartData<'scatter'>['datasets'] = plottable.value.map((m, i) => {
     const c = getProviderColor(m.provider, i)
+    const isHovered = m.id === hoverId.value
     const isActive = m.id === activeId.value
-    const isSelected = props.selectedIds.has(m.id)
+    const inQuadrant =
+      !!sel &&
+      m.id !== sel.id &&
+      m.rawPrice >= selPrice &&
+      (m.metrics[capabilityKey.value] ?? 0) <= selCap
+    const emphasized = isActive || isHovered || inQuadrant
     return {
       label: m.name,
       data: [{ x: m.rawPrice, y: m.metrics[capabilityKey.value] ?? 0 }],
-      backgroundColor: isActive ? '#2563eb' : isSelected ? c.border : hexToRgba(c.border, 0.55),
-      borderColor: isActive ? '#1d4ed8' : c.border,
-      borderWidth: isActive ? 2.5 : isSelected ? 2 : 1,
-      pointRadius: isActive ? 8 : isSelected ? 7 : 5,
+      backgroundColor:
+        isActive || isHovered ? '#2563eb' : inQuadrant ? c.border : hexToRgba(c.border, 0.35),
+      borderColor: isActive || isHovered ? '#1d4ed8' : c.border,
+      borderWidth: emphasized ? 2 : 1,
+      pointRadius: isActive || isHovered ? 8 : inQuadrant ? 7 : 5,
       pointHoverRadius: 9,
       pointHitRadius: 12,
-      order: isActive ? 0 : 1,
+      order: emphasized ? 0 : 1,
     }
   })
   return { datasets }
@@ -150,39 +173,74 @@ function buildOptions(): ChartOptions<'scatter'> {
         },
       },
     },
-    onHover: (_e, els) => {
-      if (canvas.value) canvas.value.style.cursor = els.length ? 'pointer' : 'default'
+    onHover: (e, _els, c) => {
+      const idx = pickIndexAt(e.native, c)
+      hoverId.value = idx != null ? (plottable.value[idx]?.id ?? null) : null
+      if (canvas.value) canvas.value.style.cursor = idx != null ? 'pointer' : 'default'
     },
     onClick: (e: ChartEvent, _els: ActiveElement[], c: ChartJS<'scatter'>) => {
-      if (!canvas.value) return
-      const ev = e.native as MouseEvent
-      const rect = canvas.value.getBoundingClientRect()
-      const px = ev.offsetX ?? ev.clientX - rect.left
-      const py = ev.offsetY ?? ev.clientY - rect.top
-
-      // 优先精确命中;否则取最近点并限制点击距离,点空白处可取消
-      let idx: number | null = null
-      let hit = c.getElementsAtEventForMode(e.native as MouseEvent, 'nearest', { intersect: true }, false)
-      if (hit.length) {
-        idx = hit[0].datasetIndex
-      } else {
-        hit = c.getElementsAtEventForMode(e.native as MouseEvent, 'nearest', { intersect: false }, false)
-        if (hit.length) {
-          const el = c.getDatasetMeta(hit[0].datasetIndex).data[0]
-          const dist = Math.hypot(el.x - px, el.y - py)
-          if (dist <= 20) idx = hit[0].datasetIndex
-        }
-      }
-
+      const idx = pickIndexAt(e.native, c)
       const m = idx != null ? plottable.value[idx] : undefined
       if (!m) {
         activeId.value = null
         return
       }
       activeId.value = m.id
+      hoverId.value = m.id
       emit('select', m.id)
     },
   }
+}
+
+function pickIndexAt(e: Event, c: ChartJS<'scatter'>): number | null {
+  if (!canvas.value) return null
+  const ev = e as MouseEvent
+  const rect = canvas.value.getBoundingClientRect()
+  const px = ev.offsetX ?? ev.clientX - rect.left
+  const py = ev.offsetY ?? ev.clientY - rect.top
+
+  // 优先精确命中;否则取最近点并限制点击距离
+  let hit = c.getElementsAtEventForMode(ev, 'nearest', { intersect: true }, false)
+  if (hit.length) return hit[0].datasetIndex
+  hit = c.getElementsAtEventForMode(ev, 'nearest', { intersect: false }, false)
+  if (hit.length) {
+    const el = c.getDatasetMeta(hit[0].datasetIndex).data[0]
+    const dist = Math.hypot(el.x - px, el.y - py)
+    if (dist <= 20) return hit[0].datasetIndex
+  }
+  return null
+}
+
+/** 悬停时在图上绘制「价格更高 · 能力更低」方形叠加层 */
+const quadrantPlugin = {
+  id: 'quadrant-overlay',
+  afterDatasetsDraw(pluginChart: unknown) {
+    const c = pluginChart as ChartJS<'scatter'>
+    const m = displayModel.value
+    if (!m || !c.chartArea) return
+    const { left, right, bottom, top } = c.chartArea
+    const cap = m.metrics[capabilityKey.value] ?? 0
+    if (cap <= 0 || m.rawPrice <= 0) return
+
+    const x0 = c.scales.x.getPixelForValue(m.rawPrice)
+    const y1 = c.scales.y.getPixelForValue(cap)
+    if (x0 >= right || y1 <= top) return
+
+    const ctx = c.ctx
+    ctx.save()
+    ctx.fillStyle = 'rgba(220,38,38,0.08)'
+    ctx.strokeStyle = 'rgba(220,38,38,0.55)'
+    ctx.setLineDash([6, 4])
+    ctx.lineWidth = 1.5
+    ctx.fillRect(x0, y1, right - x0, bottom - y1)
+    ctx.strokeRect(x0, y1, right - x0, bottom - y1)
+    ctx.setLineDash([])
+    ctx.fillStyle = 'rgba(220,38,38,0.9)'
+    ctx.font = '11px Inter, sans-serif'
+    const label = '价格更高 · 能力更低'
+    ctx.fillText(label, Math.max(left + 4, Math.min(x0 + 8, right - 150)), y1 + 14)
+    ctx.restore()
+  },
 }
 
 function render() {
@@ -196,7 +254,7 @@ function render() {
   const data = buildData()
   const options = buildOptions()
   if (!chart) {
-    chart = new ChartJS(canvas.value, { type: 'scatter', data, options })
+    chart = new ChartJS(canvas.value, { type: 'scatter', data, options }, [quadrantPlugin])
   } else {
     chart.data = data
     chart.options = options
@@ -205,7 +263,14 @@ function render() {
 }
 
 watch(
-  () => [props.models, props.hidden, props.selectedIds, capabilityKey.value, activeId.value],
+  () => [
+    props.models,
+    props.hidden,
+    props.selectedIds,
+    capabilityKey.value,
+    activeId.value,
+    hoverId.value,
+  ],
   render,
   { deep: true, flush: 'post' }
 )
@@ -215,8 +280,12 @@ function pickActive(id: string) {
   emit('select', id)
 }
 
-onMounted(render)
+onMounted(() => {
+  render()
+  canvas.value?.addEventListener('mouseleave', onCanvasLeave)
+})
 onUnmounted(() => {
+  canvas.value?.removeEventListener('mouseleave', onCanvasLeave)
   chart?.destroy()
   chart = null
 })
@@ -229,25 +298,26 @@ onUnmounted(() => {
       <select class="pcc-sel" :value="capabilityKey" @change="onCapabilityChange">
         <option v-for="[k, label] in capOptions" :key="k" :value="k">{{ label }}</option>
       </select>
-      <span class="pcc-hint">点击散点查看「价格更高但能力更低」的模型</span>
+      <span class="pcc-hint">悬停散点高亮「价格更高·能力更低」区域 · 点击固定查看列表</span>
     </div>
 
     <div v-if="!plottable.length" class="pcc-empty">
-      没有可绘制的模型(需要同时有价格和能力数据)
+      没有可绘制的模型(左侧未选中, 或缺少价格/能力数据)
     </div>
     <div v-else class="pcc-chart">
       <canvas ref="canvas"></canvas>
     </div>
 
-    <div v-if="activeModel" class="pcc-panel">
+    <div v-if="displayModel" class="pcc-panel">
       <div class="pcc-sel-head">
-        <span class="pcc-sel-name">{{ activeModel.name }}</span>
+        <span class="pcc-sel-name">{{ displayModel.name }}</span>
+        <span class="pcc-tag">{{ hoverId === displayModel.id ? '悬停' : '已选' }}</span>
         <span class="pcc-sel-meta">
-          ${{ activeModel.rawPrice.toFixed(2) }}/1M ·
-          {{ METRIC_LABELS[capabilityKey] }} {{ activeModel.metrics[capabilityKey] }}
+          ${{ displayModel.rawPrice.toFixed(2) }}/1M ·
+          {{ METRIC_LABELS[capabilityKey] }} {{ displayModel.metrics[capabilityKey] }}
         </span>
       </div>
-      <div v-if="(activeModel.metrics[capabilityKey] ?? 0) <= 0" class="pcc-panel-empty">
+      <div v-if="(displayModel.metrics[capabilityKey] ?? 0) <= 0" class="pcc-panel-empty">
         该模型在当前能力维度没有数据
       </div>
       <div v-else-if="!worseDeals.length" class="pcc-panel-empty">
@@ -265,11 +335,11 @@ onUnmounted(() => {
           <span class="pcc-dot" :style="{ background: getProviderColor(m.provider, 0).border }"></span>
           <span class="pcc-name">{{ m.name }}</span>
           <span class="pcc-num pcc-price">
-            ${{ m.rawPrice.toFixed(2) }} <em class="pcc-delta">+${{ (m.rawPrice - activeModel.rawPrice).toFixed(2) }}</em>
+            ${{ m.rawPrice.toFixed(2) }} <em class="pcc-delta">+${{ (m.rawPrice - displayModel.rawPrice).toFixed(2) }}</em>
           </span>
           <span class="pcc-num pcc-cap">
             {{ METRIC_LABELS[capabilityKey] }} {{ m.metrics[capabilityKey] }}
-            <em class="pcc-delta pcc-delta-down">-{{ activeModel.metrics[capabilityKey] - (m.metrics[capabilityKey] ?? 0) }}</em>
+            <em class="pcc-delta pcc-delta-down">-{{ displayModel.metrics[capabilityKey] - (m.metrics[capabilityKey] ?? 0) }}</em>
           </span>
         </div>
       </div>
@@ -371,6 +441,14 @@ onUnmounted(() => {
 .pcc-sel-meta {
   font-size: 0.7rem;
   color: #6b7280;
+}
+.pcc-tag {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: #2563eb;
+  background: #eff6ff;
+  border-radius: 99px;
+  padding: 1px 7px;
 }
 .pcc-panel-empty {
   padding: 12px 4px 4px;
