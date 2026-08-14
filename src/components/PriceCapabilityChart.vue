@@ -374,40 +374,45 @@ onUnmounted(() => {
       <canvas ref="canvas"></canvas>
     </div>
 
-    <div v-if="displayModel" class="pcc-panel">
-      <div class="pcc-sel-head">
-        <span class="pcc-sel-name">{{ displayModel.name }}</span>
-        <span class="pcc-tag">{{ hoverId === displayModel.id ? '悬停' : '已选' }}</span>
-        <span class="pcc-sel-meta">
-          ${{ displayModel.rawPrice.toFixed(2) }}/1M ·
-          {{ METRIC_LABELS[capabilityKey] }} {{ displayModel.metrics[capabilityKey] }}
-        </span>
-      </div>
-      <div v-if="(displayModel.metrics[capabilityKey] ?? 0) <= 0" class="pcc-panel-empty">
-        该模型在当前能力维度没有数据
-      </div>
-      <div v-else-if="!worseDeals.length" class="pcc-panel-empty">
-        没有价格更高且能力更低的模型
-      </div>
-      <div v-else class="pcc-list">
-        <div class="pcc-list-title">价格更高 · 能力更低</div>
-        <div
-          v-for="m in worseDeals"
-          :key="m.id"
-          class="pcc-row"
-          :class="{ active: m.id === activeId }"
-          @click="pickActive(m.id)"
-        >
-          <span class="pcc-dot" :style="{ background: getProviderColor(m.provider, 0).border }"></span>
-          <span class="pcc-name">{{ m.name }}</span>
-          <span class="pcc-num pcc-price">
-            ${{ m.rawPrice.toFixed(2) }} <em class="pcc-delta">+${{ (m.rawPrice - displayModel.rawPrice).toFixed(2) }}</em>
-          </span>
-          <span class="pcc-num pcc-cap">
-            {{ METRIC_LABELS[capabilityKey] }} {{ m.metrics[capabilityKey] }}
-            <em class="pcc-delta pcc-delta-down">-{{ displayModel.metrics[capabilityKey] - (m.metrics[capabilityKey] ?? 0) }}</em>
+    <div class="pcc-panel">
+      <template v-if="displayModel">
+        <div class="pcc-sel-head">
+          <span class="pcc-sel-name">{{ displayModel.name }}</span>
+          <span class="pcc-tag">{{ hoverId === displayModel.id ? '悬停' : '已选' }}</span>
+          <span class="pcc-sel-meta">
+            ${{ displayModel.rawPrice.toFixed(2) }}/1M ·
+            {{ METRIC_LABELS[capabilityKey] }} {{ displayModel.metrics[capabilityKey] }}
           </span>
         </div>
+        <div v-if="(displayModel.metrics[capabilityKey] ?? 0) <= 0" class="pcc-panel-empty">
+          该模型在当前能力维度没有数据
+        </div>
+        <div v-else-if="!worseDeals.length" class="pcc-panel-empty">
+          没有价格更高且能力更低的模型
+        </div>
+        <div v-else class="pcc-list">
+          <div class="pcc-list-title">价格更高 · 能力更低</div>
+          <div
+            v-for="m in worseDeals"
+            :key="m.id"
+            class="pcc-row"
+            :class="{ active: m.id === activeId }"
+            @click="pickActive(m.id)"
+          >
+            <span class="pcc-dot" :style="{ background: getProviderColor(m.provider, 0).border }"></span>
+            <span class="pcc-name">{{ m.name }}</span>
+            <span class="pcc-num pcc-price">
+              ${{ m.rawPrice.toFixed(2) }} <em class="pcc-delta">+${{ (m.rawPrice - displayModel.rawPrice).toFixed(2) }}</em>
+            </span>
+            <span class="pcc-num pcc-cap">
+              {{ METRIC_LABELS[capabilityKey] }} {{ m.metrics[capabilityKey] }}
+              <em class="pcc-delta pcc-delta-down">-{{ displayModel.metrics[capabilityKey] - (m.metrics[capabilityKey] ?? 0) }}</em>
+            </span>
+          </div>
+        </div>
+      </template>
+      <div v-else class="pcc-panel-empty">
+        悬停或点击散点, 查看「价格更高 · 能力更低」的模型
       </div>
     </div>
   </div>
@@ -484,7 +489,7 @@ onUnmounted(() => {
 
 .pcc-panel {
   flex-shrink: 0;
-  max-height: 40%;
+  height: 168px;
   overflow: auto;
   background: #fff;
   border: 1px solid #e5e7eb;
