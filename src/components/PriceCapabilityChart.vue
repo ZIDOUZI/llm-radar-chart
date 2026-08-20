@@ -11,6 +11,7 @@ import {
 import type { ChartData, ChartOptions, ChartEvent, ActiveElement } from 'chart.js'
 import type { ModelInfo, RadarMetrics } from '../types'
 import { METRIC_LABELS } from '../types'
+import { canonicalKey } from '../services/match'
 import { getProviderColor, hexToRgba } from '../utils/colors'
 
 ChartJS.register(ScatterController, LinearScale, LogarithmicScale, PointElement, Tooltip)
@@ -38,6 +39,63 @@ const LABEL_OTHER_MAX = 40
 function shortName(name: string): string {
   const base = name.replace(/\s*\(.*$/, '')
   return base.length > 16 ? base.slice(0, 15) + '…' : base
+}
+
+/** 推理强度从低到高的顺序。没有明确强度的模型不参与连线。 */
+const REASONING_RANKS: Record<string, number> = {
+  'no-thinking': 0,
+  'no-reasoning': 0,
+  'non-thinking': 0,
+  'non-reasoning': 0,
+  nothinking: 0,
+  nonreasoning: 0,
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  'x-high': 5,
+  'extra-high': 5,
+  max: 6,
+}
+const REASONING_WORDS = new Set(['thinking', 'reasoning', 'auto', 'effort', 'extended', 'mode', 'preview', 'exp', 'latest'])
+
+interface ReasoningProfile {
+  base: string
+  rank: number
+}
+
+function parseReasoningProfile(value: string): ReasoningProfile | null {
+  const tokens = canonicalKey(value).split('-').filter(Boolean)
+  if (!tokens.length) return null
+
+  // “No Thinking”/“Non-Reasoning”是一个整体等级，不能只按 thinking/reasoning 去掉。
+  for (const [suffix, rank] of Object.entries(REASONING_RANKS).filter(([key]) => key.includes('-'))) {
+    const suffixTokens = suffix.split('-')
+    const start = tokens.length - suffixTokens.length
+    if (start < 1 || tokens.slice(start).join('-') !== suffix) continue
+    const base = tokens.slice(0, start)
+    while (base.length && REASONING_WORDS.has(base[base.length - 1])) base.pop()
+    if (base.length) return { base: base.join('-'), rank }
+  }
+
+  // 处理 High/Low/Medium xHigh/Max 后跟 Effort、Thinking 等修饰词的形式。
+  for (let i = tokens.length - 1; i >= 1; i--) {
+    const rank = REASONING_RANKS[tokens[i]]
+    if (rank == null || !tokens.slice(i + 1).every((token) => REASONING_WORDS.has(token))) continue
+    const base = tokens.slice(0, i)
+    while (base.length && REASONING_WORDS.has(base[base.length - 1])) base.pop()
+    if (base.length) return { base: base.join('-'), rank }
+  }
+  return null
+}
+
+function reasoningProfile(model: ModelInfo): ReasoningProfile | null {
+  const fromName = parseReasoningProfile(model.name)
+  if (fromName) return fromName
+  // 部分数据源展示名会省略强度，但 id 仍保留 -low/-high 等后缀。
+  return parseReasoningProfile(model.id)
 }
 
 let rafPending = false
@@ -124,6 +182,45 @@ function buildData(): ChartData<'scatter'> {
     }
   })
   return { datasets }
+}
+
+/** 同一基础模型的相邻推理强度之间画细线，线条位于散点下方。 */
+const reasoningConnectionsPlugin = {
+  id: 'reasoning-connections',
+  beforeDatasetsDraw(pluginChart: unknown) {
+    const c = pluginChart as ChartJS<'scatter'>
+    if (!c.chartArea || plottable.value.length < 2) return
+
+    const groups = new Map<string, Map<number, number>>()
+    plottable.value.forEach((model, index) => {
+      const profile = reasoningProfile(model)
+      if (!profile) return
+      const levels = groups.get(profile.base) ?? new Map<number, number>()
+      // 同一级别存在重复数据时只保留第一个，避免画出不代表强度变化的横向线。
+      if (!levels.has(profile.rank)) levels.set(profile.rank, index)
+      groups.set(profile.base, levels)
+    })
+
+    const ctx = c.ctx
+    ctx.save()
+    ctx.lineWidth = 1
+    ctx.lineCap = 'round'
+    for (const levels of groups.values()) {
+      const points = [...levels.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([_, index]) => ({ index, point: c.getDatasetMeta(index).data[0] }))
+        .filter(({ point }) => !!point)
+      if (points.length < 2) continue
+
+      const color = getProviderColor(plottable.value[points[0].index].provider, points[0].index).border
+      ctx.strokeStyle = hexToRgba(color, 0.38)
+      ctx.beginPath()
+      ctx.moveTo(points[0].point.x, points[0].point.y)
+      for (const { point } of points.slice(1)) ctx.lineTo(point.x, point.y)
+      ctx.stroke()
+    }
+    ctx.restore()
+  },
 }
 
 function formatPrice(v: unknown): string {
@@ -386,7 +483,7 @@ function render() {
         type: 'scatter',
         data,
         options,
-        plugins: [quadrantPlugin, hoverHighlightPlugin, labelPlugin],
+        plugins: [reasoningConnectionsPlugin, quadrantPlugin, hoverHighlightPlugin, labelPlugin],
       }
     )
   } else {
@@ -428,7 +525,7 @@ onUnmounted(() => {
       <button class="pcc-lbl-btn" :class="{ on: showLabels }" @click="toggleLabels">
         名称 {{ showLabels ? '开' : '关' }}
       </button>
-      <span class="pcc-hint">悬停散点显示矩形区域 · 点击固定查看列表</span>
+      <span class="pcc-hint">悬停散点显示矩形区域 · 同模型相邻推理强度用细线连接 · 点击固定查看列表</span>
     </div>
 
     <div v-if="!plottable.length" class="pcc-empty">
