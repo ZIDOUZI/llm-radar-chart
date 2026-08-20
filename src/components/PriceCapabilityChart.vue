@@ -28,6 +28,8 @@ const emit = defineEmits<{
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const capabilityKey = ref<keyof RadarMetrics>('intelligence')
+type XAxisMode = 'tokenPrice' | 'taskCost'
+const xAxisMode = ref<XAxisMode>('tokenPrice')
 const activeId = ref<string | null>(null)
 const hoverId = ref<string | null>(null)
 const showLabels = ref(true)
@@ -120,13 +122,42 @@ const capOptions = computed(() =>
     .filter(([k]) => k !== 'price')
 )
 
-/** 可绘制的模型:左侧已选中、未被隐藏、有真实价格、所选能力维度有分 */
+const xAxisLabel = computed(() => xAxisMode.value === 'taskCost' ? 'LiveBench 单任务平均成本' : 'Token 价格')
+const xAxisSuffix = computed(() => xAxisMode.value === 'taskCost' ? '/task' : '/1M tokens')
+const xAxisComparisonLabel = computed(() => xAxisMode.value === 'taskCost' ? '成本' : '价格')
+
+/** 任务成本只取 LiveBench 的 cost_per_question, 不回退到 token 价格或成功任务成本。 */
+function xValue(model: ModelInfo): number | null {
+  if (xAxisMode.value === 'taskCost') {
+    const cost = model.detail?.livebench?.costPerTask
+    return cost != null && cost > 0 ? cost : null
+  }
+  return model.rawPrice > 0 ? model.rawPrice : null
+}
+
+function formatXAxisAmount(value: number): string {
+  return xAxisMode.value === 'taskCost' ? '$' + value.toFixed(4) : '$' + value.toFixed(2)
+}
+
+function formatXAxisTick(value: unknown): string {
+  const n = Number(value)
+  if (!isFinite(n)) return ''
+  if (xAxisMode.value === 'taskCost') return '$' + (n >= 1 ? n.toFixed(2) : n.toPrecision(2))
+  return n >= 1 ? '$' + n.toFixed(0) : '$' + String(parseFloat(n.toPrecision(2)))
+}
+
+function onXAxisChange(e: Event) {
+  const value = (e.target as HTMLSelectElement).value as XAxisMode
+  if (value === 'tokenPrice' || value === 'taskCost') xAxisMode.value = value
+}
+
+/** 可绘制的模型:左侧已选中、未被隐藏、有当前横轴数据、所选能力维度有分 */
 const plottable = computed(() =>
   props.models.filter(
     (m) =>
       props.selectedIds.has(m.id) &&
       !props.hidden.has(m.id) &&
-      m.rawPrice > 0 &&
+      xValue(m) != null &&
       (m.metrics[capabilityKey.value] ?? 0) > 0
   )
 )
@@ -137,16 +168,20 @@ const displayModel = computed(() => {
   return plottable.value.find((m) => m.id === id) ?? null
 })
 
-/** 价格更高但能力更低(相对选中模型) */
+/** 横轴值更高但能力更低(相对选中模型) */
 const worseDeals = computed<ModelInfo[]>(() => {
   const sel = displayModel.value
   if (!sel) return []
   const cap = capabilityKey.value
   const selCap = sel.metrics[cap] ?? 0
-  if (selCap <= 0) return []
+  const selX = xValue(sel)
+  if (selCap <= 0 || selX == null) return []
   return plottable.value
-    .filter((m) => m.id !== sel.id && m.rawPrice > sel.rawPrice && (m.metrics[cap] ?? 0) < selCap)
-    .sort((a, b) => b.rawPrice - a.rawPrice || ((a.metrics[cap] ?? 0) - (b.metrics[cap] ?? 0)))
+    .filter((m) => {
+      const value = xValue(m)
+      return m.id !== sel.id && value != null && value > selX && (m.metrics[cap] ?? 0) < selCap
+    })
+    .sort((a, b) => (xValue(b) ?? 0) - (xValue(a) ?? 0) || ((a.metrics[cap] ?? 0) - (b.metrics[cap] ?? 0)))
 })
 
 function onCapabilityChange(e: Event) {
@@ -159,10 +194,10 @@ function toggleLabels() {
   scheduleDraw()
 }
 
-function priceAxisRange() {
-  const prices = plottable.value.map((m) => m.rawPrice)
-  let min = Math.pow(10, Math.floor(Math.log10(Math.min(...prices))))
-  let max = Math.pow(10, Math.ceil(Math.log10(Math.max(...prices))))
+function xAxisRange() {
+  const values = plottable.value.map((m) => xValue(m) ?? 0).filter((v) => v > 0)
+  let min = Math.pow(10, Math.floor(Math.log10(Math.min(...values))))
+  let max = Math.pow(10, Math.ceil(Math.log10(Math.max(...values))))
   if (max <= min) max = min * 10
   return { min, max }
 }
@@ -172,7 +207,7 @@ function buildData(): ChartData<'scatter'> {
     const c = getProviderColor(m.provider, i)
     return {
       label: m.name,
-      data: [{ x: m.rawPrice, y: m.metrics[capabilityKey.value] ?? 0 }],
+      data: [{ x: xValue(m) ?? 0, y: m.metrics[capabilityKey.value] ?? 0 }],
       backgroundColor: hexToRgba(c.border, 0.75),
       borderColor: c.border,
       borderWidth: 1.5,
@@ -223,14 +258,8 @@ const reasoningConnectionsPlugin = {
   },
 }
 
-function formatPrice(v: unknown): string {
-  const n = Number(v)
-  if (!isFinite(n)) return ''
-  return n >= 1 ? '$' + n.toFixed(0) : '$' + String(parseFloat(n.toPrecision(2)))
-}
-
 function buildOptions(): ChartOptions<'scatter'> {
-  const range = priceAxisRange()
+  const range = xAxisRange()
   return {
     responsive: true,
     maintainAspectRatio: true,
@@ -242,14 +271,14 @@ function buildOptions(): ChartOptions<'scatter'> {
         max: range.max,
         title: {
           display: true,
-          text: '价格 ($/1M tokens, 对数刻度)',
+          text: `${xAxisLabel.value} (${xAxisSuffix.value}, 对数刻度)`,
           color: '#374151',
           font: { size: 11, weight: 'bold' },
         },
         ticks: {
           color: '#9ca3af',
           font: { size: 10 },
-          callback: formatPrice,
+          callback: formatXAxisTick,
         },
         grid: { color: 'rgba(0,0,0,0.06)' },
       },
@@ -279,7 +308,7 @@ function buildOptions(): ChartOptions<'scatter'> {
             const m = plottable.value[ctx.datasetIndex]
             if (!m) return ''
             const raw = ctx.raw as { x: number; y: number }
-            return ` ${m.name}: ${METRIC_LABELS[capabilityKey.value]} ${raw.y} · $${raw.x.toFixed(2)}/1M`
+            return ` ${m.name}: ${METRIC_LABELS[capabilityKey.value]} ${raw.y} · ${formatXAxisAmount(raw.x)}${xAxisSuffix.value}`
           },
         },
       },
@@ -336,9 +365,10 @@ const quadrantPlugin = {
     if (!m || !c.chartArea) return
     const { left, right, top, bottom } = c.chartArea
     const cap = m.metrics[capabilityKey.value] ?? 0
-    if (cap <= 0 || m.rawPrice <= 0) return
+    const mX = xValue(m)
+    if (cap <= 0 || mX == null) return
 
-    const x0 = c.scales.x.getPixelForValue(m.rawPrice)
+    const x0 = c.scales.x.getPixelForValue(mX)
     const y1 = c.scales.y.getPixelForValue(cap)
     if (x0 >= right || y1 <= top) return
 
@@ -353,7 +383,7 @@ const quadrantPlugin = {
     ctx.setLineDash([])
     ctx.fillStyle = 'rgba(220,38,38,0.9)'
     ctx.font = '11px Inter, sans-serif'
-    ctx.fillText('价格更高 · 能力更低', Math.max(left + 4, Math.min(x0 + 8, right - 150)), y1 + 14)
+    ctx.fillText(`${xAxisComparisonLabel.value}更高 · 能力更低`, Math.max(left + 4, Math.min(x0 + 8, right - 150)), y1 + 14)
     ctx.restore()
   },
 }
@@ -366,7 +396,7 @@ const hoverHighlightPlugin = {
     if (!c.chartArea) return
     const sel = displayModel.value
     const selCap = sel?.metrics[capabilityKey.value] ?? 0
-    const selPrice = sel?.rawPrice ?? 0
+    const selX = sel ? xValue(sel) : null
     const ctx = c.ctx
     ctx.save()
     for (let i = 0; i < plottable.value.length; i++) {
@@ -375,10 +405,13 @@ const hoverHighlightPlugin = {
       if (!pt) continue
       const isActive = m.id === activeId.value
       const isHovered = m.id === hoverId.value
+      const mX = xValue(m)
       const inQuadrant =
         !!sel &&
+        selX != null &&
+        mX != null &&
         m.id !== sel.id &&
-        m.rawPrice > selPrice &&
+        mX > selX &&
         (m.metrics[capabilityKey.value] ?? 0) < selCap
       if (!isActive && !isHovered && !inQuadrant) continue
       const col = getProviderColor(m.provider, i).border
@@ -494,7 +527,7 @@ function render() {
 }
 
 watch(
-  () => [props.models, props.hidden, props.selectedIds, capabilityKey.value],
+  () => [props.models, props.hidden, props.selectedIds, capabilityKey.value, xAxisMode.value],
   render,
   { deep: true, flush: 'post' }
 )
@@ -518,6 +551,16 @@ onUnmounted(() => {
 <template>
   <div class="pcc">
     <div class="pcc-bar">
+      <span class="pcc-lbl">横轴</span>
+      <select
+        class="pcc-sel"
+        :value="xAxisMode"
+        title="两种横轴口径独立展示,不会互相回退"
+        @change="onXAxisChange"
+      >
+        <option value="tokenPrice">Token 价格</option>
+        <option value="taskCost">LiveBench 单任务平均成本</option>
+      </select>
       <span class="pcc-lbl">能力维度</span>
       <select class="pcc-sel" :value="capabilityKey" @change="onCapabilityChange">
         <option v-for="[k, label] in capOptions" :key="k" :value="k">{{ label }}</option>
@@ -525,11 +568,11 @@ onUnmounted(() => {
       <button class="pcc-lbl-btn" :class="{ on: showLabels }" @click="toggleLabels">
         名称 {{ showLabels ? '开' : '关' }}
       </button>
-      <span class="pcc-hint">悬停散点显示矩形区域 · 同模型相邻推理强度用细线连接 · 点击固定查看列表</span>
+      <span class="pcc-hint">横轴口径独立取值,无跨平台回退 · 同模型相邻推理强度用细线连接 · 点击固定查看列表</span>
     </div>
 
     <div v-if="!plottable.length" class="pcc-empty">
-      没有可绘制的模型(左侧未选中, 或缺少价格/能力数据)
+      没有可绘制的模型(左侧未选中, 或缺少{{ xAxisLabel }}/能力数据)
     </div>
     <div v-else class="pcc-chart">
       <canvas ref="canvas"></canvas>
@@ -541,7 +584,7 @@ onUnmounted(() => {
           <span class="pcc-sel-name">{{ displayModel.name }}</span>
           <span class="pcc-tag">{{ hoverId === displayModel.id ? '悬停' : '已选' }}</span>
           <span class="pcc-sel-meta">
-            ${{ displayModel.rawPrice.toFixed(2) }}/1M ·
+            {{ formatXAxisAmount(xValue(displayModel) ?? 0) }}{{ xAxisSuffix }} ·
             {{ METRIC_LABELS[capabilityKey] }} {{ displayModel.metrics[capabilityKey] }}
           </span>
         </div>
@@ -549,10 +592,10 @@ onUnmounted(() => {
           该模型在当前能力维度没有数据
         </div>
         <div v-else-if="!worseDeals.length" class="pcc-panel-empty">
-          没有价格更高且能力更低的模型
+          没有{{ xAxisComparisonLabel }}更高且能力更低的模型
         </div>
         <div v-else class="pcc-list">
-          <div class="pcc-list-title">价格更高 · 能力更低</div>
+          <div class="pcc-list-title">{{ xAxisComparisonLabel }}更高 · 能力更低</div>
           <div
             v-for="m in worseDeals"
             :key="m.id"
@@ -563,7 +606,8 @@ onUnmounted(() => {
             <span class="pcc-dot" :style="{ background: getProviderColor(m.provider, 0).border }"></span>
             <span class="pcc-name">{{ m.name }}</span>
             <span class="pcc-num pcc-price">
-              ${{ m.rawPrice.toFixed(2) }} <em class="pcc-delta">+${{ (m.rawPrice - displayModel.rawPrice).toFixed(2) }}</em>
+              {{ formatXAxisAmount(xValue(m) ?? 0) }}
+              <em class="pcc-delta">+{{ formatXAxisAmount((xValue(m) ?? 0) - (xValue(displayModel) ?? 0)) }}</em>
             </span>
             <span class="pcc-num pcc-cap">
               {{ METRIC_LABELS[capabilityKey] }} {{ m.metrics[capabilityKey] }}
@@ -573,7 +617,7 @@ onUnmounted(() => {
         </div>
       </template>
       <div v-else class="pcc-panel-empty">
-        悬停或点击散点, 查看「价格更高 · 能力更低」的模型
+        悬停或点击散点, 查看「{{ xAxisComparisonLabel }}更高 · 能力更低」的模型
       </div>
     </div>
   </div>
